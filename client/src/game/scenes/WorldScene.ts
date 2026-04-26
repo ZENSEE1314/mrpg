@@ -1,9 +1,11 @@
 import Phaser from "phaser";
 import {
   CLASSES,
+  ITEMS,
   MONSTERS,
   ZONES,
   type ClassId,
+  type FloorItem,
   type MonsterState,
   type PlayerState,
   type ZoneId,
@@ -62,6 +64,7 @@ export class WorldScene extends Phaser.Scene {
   private enterPrompt!: Phaser.GameObjects.Text;
   private players: Map<string, PlayerSprite> = new Map();
   private monsters: Map<string, MonsterSprite> = new Map();
+  private floorSprites: Map<string, Phaser.GameObjects.Container> = new Map();
   private floatings!: Phaser.GameObjects.Container;
   private floatingsById: Map<number, Phaser.GameObjects.Text> = new Map();
   private moveTarget: { x: number; y: number } | null = null;
@@ -184,6 +187,18 @@ export class WorldScene extends Phaser.Scene {
         sprite.selectionRing.destroy();
         sprite.selectionRing = null;
       }
+    }
+
+    // Floor item sync
+    for (const [uid, sprite] of this.floorSprites) {
+      if (!state.floorItems.has(uid)) {
+        sprite.destroy();
+        this.floorSprites.delete(uid);
+      }
+    }
+    for (const [uid, item] of state.floorItems) {
+      if (this.floorSprites.has(uid)) continue;
+      this.floorSprites.set(uid, this.spawnFloorItem(item));
     }
 
     const newFloatings = state.floatings;
@@ -609,6 +624,35 @@ export class WorldScene extends Phaser.Scene {
       walkPhase: 0,
       lastFacing: 0,
     });
+  }
+
+  private spawnFloorItem(item: FloorItem): Phaser.GameObjects.Container {
+    const def = ITEMS[item.itemId];
+    const emoji = def?.emoji ?? "❓";
+    const rarityColor: Record<string, number> = {
+      common: 0xcbd5e1,
+      uncommon: 0x5dc88a,
+      rare: 0x5b8aff,
+      epic: 0xbd5fff,
+      legendary: 0xffd54f,
+    };
+    const color = rarityColor[def?.rarity ?? "common"] ?? 0xcbd5e1;
+    const shadow = this.add.ellipse(0, 8, 30, 8, 0x000000, 0.4);
+    const halo = this.add.circle(0, 0, 16, color, 0.18).setStrokeStyle(2, color, 0.7);
+    const icon = this.add.text(0, 0, emoji, { fontSize: "20px" }).setOrigin(0.5);
+    const c = this.add.container(item.x, item.y, [shadow, halo, icon]);
+    c.setDepth(8);
+    // Gentle pulse
+    this.tweens.add({
+      targets: halo,
+      scale: { from: 0.9, to: 1.15 },
+      alpha: { from: 0.4, to: 0.18 },
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+    return c;
   }
 
   private spawnMonsterSprite(m: MonsterState) {

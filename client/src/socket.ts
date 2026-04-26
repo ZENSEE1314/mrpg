@@ -1,6 +1,6 @@
 import { io, type Socket } from "socket.io-client";
 import { useGameStore } from "./store";
-import type { AckResp, AttributeId, ZoneId } from "@aetheria/shared";
+import type { AckResp, AttributeId, EquipSlot, ZoneId } from "@aetheria/shared";
 
 let socket: Socket | null = null;
 
@@ -23,7 +23,7 @@ function wireGlobalListeners(s: Socket): void {
 
   s.on("hello", (data) => {
     store().setMe(data.you);
-    store().setZone(data.you.zone, data.players, data.monsters);
+    store().setZone(data.you.zone, data.players, data.monsters, data.floorItems ?? []);
   });
 
   s.on("zoneSnapshot", (data) => {
@@ -32,8 +32,11 @@ function wireGlobalListeners(s: Socket): void {
       const updated = data.players.find((p: { id: string }) => p.id === me.id);
       if (updated) store().setMe(updated);
     }
-    store().setZone(data.zone, data.players, data.monsters);
+    store().setZone(data.zone, data.players, data.monsters, data.floorItems ?? []);
   });
+
+  s.on("floorItemSpawned", (data) => store().upsertFloorItem(data.item));
+  s.on("floorItemDespawned", (data) => store().removeFloorItem(data.uid));
 
   s.on("playerJoined", (data) => {
     const me = store().me;
@@ -129,8 +132,13 @@ export function emitAttack(targetId: string): void {
 export function emitSkill(skillId: string, targetId?: string): void {
   getSocket().emit("useSkill", { skillId, targetId });
 }
-export function emitItem(itemId: string): void {
-  getSocket().emit("useItem", { itemId });
+export function emitItem(uid: string): void {
+  getSocket().emit("useItem", { uid });
+}
+export function emitUnequip(slot: EquipSlot): Promise<AckResp> {
+  return new Promise((resolve) => {
+    getSocket().emit("unequip", { slot }, (ack: AckResp) => resolve(ack));
+  });
 }
 export function emitTravel(zone: ZoneId): Promise<AckResp> {
   return new Promise((resolve) => {
@@ -142,9 +150,9 @@ export function emitBuy(itemId: string): Promise<AckResp> {
     getSocket().emit("buyItem", { itemId }, (ack: AckResp) => resolve(ack));
   });
 }
-export function emitSell(itemId: string): Promise<AckResp> {
+export function emitSell(uid: string): Promise<AckResp> {
   return new Promise((resolve) => {
-    getSocket().emit("sellItem", { itemId }, (ack: AckResp) => resolve(ack));
+    getSocket().emit("sellItem", { uid }, (ack: AckResp) => resolve(ack));
   });
 }
 export function emitChat(text: string): void {

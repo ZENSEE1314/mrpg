@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { MonsterState, PlayerState, ZoneId } from "@aetheria/shared";
+import type { FloorItem, MonsterState, PlayerState, ZoneId } from "@aetheria/shared";
 
 export interface ChatLine {
   from: string;
@@ -25,6 +25,7 @@ interface GameStore {
   me: PlayerState | null;
   players: Map<string, PlayerState>;
   monsters: Map<string, MonsterState>;
+  floorItems: Map<string, FloorItem>;
   zone: ZoneId | null;
   chat: ChatLine[];
   selectedTargetId: string | null;
@@ -39,7 +40,14 @@ interface GameStore {
   removePlayer: (id: string) => void;
   upsertMonster: (m: MonsterState) => void;
   removeMonster: (id: string) => void;
-  setZone: (zone: ZoneId, players: PlayerState[], monsters: MonsterState[]) => void;
+  upsertFloorItem: (f: FloorItem) => void;
+  removeFloorItem: (uid: string) => void;
+  setZone: (
+    zone: ZoneId,
+    players: PlayerState[],
+    monsters: MonsterState[],
+    floorItems: FloorItem[],
+  ) => void;
   selectTarget: (id: string | null) => void;
   addChat: (l: ChatLine) => void;
   pushFloating: (f: Omit<FloatingNumber, "id" | "ts">) => void;
@@ -58,6 +66,7 @@ export const useGameStore = create<GameStore>((set) => ({
   me: null,
   players: new Map(),
   monsters: new Map(),
+  floorItems: new Map(),
   zone: null,
   chat: [],
   selectedTargetId: null,
@@ -92,11 +101,24 @@ export const useGameStore = create<GameStore>((set) => ({
       next.delete(id);
       return { monsters: next };
     }),
-  setZone: (zone, players, monsters) =>
+  upsertFloorItem: (f) =>
+    set((s) => {
+      const next = new Map(s.floorItems);
+      next.set(f.uid, f);
+      return { floorItems: next };
+    }),
+  removeFloorItem: (uid) =>
+    set((s) => {
+      const next = new Map(s.floorItems);
+      next.delete(uid);
+      return { floorItems: next };
+    }),
+  setZone: (zone, players, monsters, floorItems) =>
     set({
       zone,
       players: new Map(players.map((p) => [p.id, p])),
       monsters: new Map(monsters.map((m) => [m.id, m])),
+      floorItems: new Map(floorItems.map((f) => [f.uid, f])),
       selectedTargetId: null,
     }),
   selectTarget: (id) => set({ selectedTargetId: id }),
@@ -125,6 +147,7 @@ export const useGameStore = create<GameStore>((set) => ({
       me: null,
       players: new Map(),
       monsters: new Map(),
+      floorItems: new Map(),
       zone: null,
       chat: [],
       selectedTargetId: null,

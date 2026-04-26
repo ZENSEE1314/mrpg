@@ -63,7 +63,7 @@ export function SkillBar({ onOpenPanel }: Props) {
       <button
         className="skill-btn"
         disabled={!hpPotion || hpPotion.qty <= 0 || me.hp >= me.maxHp}
-        onClick={() => emitItem("potion_hp_s")}
+        onClick={() => hpPotion && emitItem(hpPotion.uid)}
         title="Lesser Healing Potion (+50 HP)"
       >
         <span>🧪</span>
@@ -72,7 +72,7 @@ export function SkillBar({ onOpenPanel }: Props) {
       <button
         className="skill-btn"
         disabled={!mpPotion || mpPotion.qty <= 0 || me.mp >= me.maxMp}
-        onClick={() => emitItem("potion_mp_s")}
+        onClick={() => mpPotion && emitItem(mpPotion.uid)}
         title="Lesser Mana Potion (+30 MP)"
       >
         <span>🔵</span>

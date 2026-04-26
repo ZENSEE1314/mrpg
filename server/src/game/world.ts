@@ -2,19 +2,34 @@ import { nanoid } from "nanoid";
 import {
   CLASSES,
   DEFAULT_GAME_CONFIG,
+  EMPTY_EQUIPPED,
+  INVENTORY_COLS,
+  INVENTORY_ROWS,
   ITEMS,
   MONSTERS,
+  RARITY_AFFIX_COUNT,
   ZONES,
   attributeUpgradeCost,
   bonusFromAttributes,
+  equipSlotFor,
+  findFreeSlot,
+  isTwoHanded,
+  itemShape,
+  pickDropItemId,
+  rollAffixes,
+  rollRarity,
   statsForLevel,
+  type Affix,
   type AgentState,
   type AttributeId,
   type Attributes,
   type ClassId,
+  type EquipSlot,
   type EquippedSlots,
+  type FloorItem,
   type GameConfig,
-  type InventorySlot,
+  type InventoryItem,
+  type ItemDef,
   type MonsterState,
   type MonsterType,
   type PlayerState,
@@ -43,7 +58,11 @@ interface Zone {
   id: ZoneId;
   players: Map<string, Connection>;
   monsters: Map<string, MonsterState>;
+  floorItems: Map<string, FloorItem>;
 }
+
+const FLOOR_DESPAWN_MS = 90_000;
+const PICKUP_RADIUS = 48;
 
 export type Broadcast = (zone: ZoneId, event: string, payload: unknown) => void;
 export type DirectSend = (socketId: string, event: string, payload: unknown) => void;
@@ -89,7 +108,12 @@ export class World {
 
   constructor(private broadcast: Broadcast, private direct: DirectSend) {
     for (const z of Object.values(ZONES)) {
-      this.zones.set(z.id, { id: z.id, players: new Map(), monsters: new Map() });
+      this.zones.set(z.id, {
+        id: z.id,
+        players: new Map(),
+        monsters: new Map(),
+        floorItems: new Map(),
+      });
     }
   }
 
@@ -112,8 +136,8 @@ export class World {
     const row = db.prepare("SELECT * FROM characters WHERE id = ?").get(charId) as CharacterRow | undefined;
     if (!row) throw new Error("Character not found");
     const classId = row.class_id as ClassId;
-    const equipped: EquippedSlots = JSON.parse(row.equipped_json);
-    const inventory: InventorySlot[] = JSON.parse(row.inventory_json);
+    const equipped = migrateEquipped(JSON.parse(row.equipped_json));
+    const inventory = migrateInventory(JSON.parse(row.inventory_json));
     const agent: AgentState = JSON.parse(row.agent_json);
     const attrs: Attributes = {
       str: row.attr_str,
@@ -121,7 +145,7 @@ export class World {
       luck: row.attr_luck,
       magic: row.attr_magic,
     };
-    const stats = deriveStats(classId, row.level, attrs, equipped);
+    const stats = deriveStats(classId, row.level, attrs, equipped, inventory);
 
     const player: PlayerState = {
       id: row.id,
@@ -201,7 +225,13 @@ export class World {
     conn.player.unspentPoints -= cost;
     // Re-derive combat stats (HP/MP caps may shift; preserve current/max ratio).
     const before = { hp: conn.player.hp, mp: conn.player.mp, maxHp: conn.player.maxHp, maxMp: conn.player.maxMp };
-    const fresh = deriveStats(conn.player.classId, conn.player.level, conn.player.attrs, conn.player.equipped);
+    const fresh = deriveStats(
+      conn.player.classId,
+      conn.player.level,
+      conn.player.attrs,
+      conn.player.equipped,
+      conn.player.inventory,
+    );
     conn.player.stats = fresh;
     conn.player.maxHp = fresh.hp;
     conn.player.maxMp = fresh.mp;
@@ -245,11 +275,16 @@ export class World {
 
   // ---------- snapshots ----------
 
-  zoneSnapshot(zoneId: ZoneId): { players: PlayerState[]; monsters: MonsterState[] } {
+  zoneSnapshot(zoneId: ZoneId): {
+    players: PlayerState[];
+    monsters: MonsterState[];
+    floorItems: FloorItem[];
+  } {
     const z = this.zones.get(zoneId)!;
     return {
       players: [...z.players.values()].map((c) => c.player),
       monsters: [...z.monsters.values()],
+      floorItems: [...z.floorItems.values()],
     };
   }
 
@@ -375,13 +410,13 @@ export class World {
     this.direct(socketId, "playerStats", { player: conn.player });
   }
 
-  useItem(socketId: string, itemId: string): void {
+  useItem(socketId: string, uid: string): void {
     const conn = this.playerBySocket.get(socketId);
     if (!conn) return;
-    const def = ITEMS[itemId];
+    const inst = conn.player.inventory.find((s) => s.uid === uid);
+    if (!inst || inst.qty <= 0) return;
+    const def = ITEMS[inst.itemId];
     if (!def) return;
-    const slot = conn.player.inventory.find((s) => s.itemId === itemId);
-    if (!slot || slot.qty <= 0) return;
 
     if (def.slot === "consumable" && def.consumeEffect) {
       if (def.consumeEffect.healHp) {
@@ -390,36 +425,90 @@ export class World {
       if (def.consumeEffect.healMp) {
         conn.player.mp = Math.min(conn.player.maxMp, conn.player.mp + def.consumeEffect.healMp);
       }
-      slot.qty -= 1;
-      if (slot.qty <= 0) {
-        conn.player.inventory = conn.player.inventory.filter((s) => s.itemId !== itemId);
+      inst.qty -= 1;
+      if (inst.qty <= 0) {
+        conn.player.inventory = conn.player.inventory.filter((s) => s.uid !== uid);
       }
-    } else if (def.slot === "weapon" || def.slot === "armor" || def.slot === "trinket") {
-      const slotName = def.slot;
-      const prev = conn.player.equipped[slotName];
-      conn.player.equipped[slotName] = itemId;
-      if (slot.qty <= 1) {
-        conn.player.inventory = conn.player.inventory.filter((s) => s.itemId !== itemId);
-      } else {
-        slot.qty -= 1;
-      }
-      if (prev) {
-        addToInventory(conn.player.inventory, prev, 1);
-      }
-      const newStats = deriveStats(
-        conn.player.classId,
-        conn.player.level,
-        conn.player.attrs,
-        conn.player.equipped,
-      );
-      conn.player.stats = newStats;
-      conn.player.maxHp = newStats.hp;
-      conn.player.maxMp = newStats.mp;
-      conn.player.hp = Math.min(conn.player.hp, newStats.hp);
-      conn.player.mp = Math.min(conn.player.mp, newStats.mp);
+      this.direct(socketId, "playerStats", { player: conn.player });
+      return;
     }
 
+    // Equip path.
+    const target = equipSlotFor(def);
+    if (!target) {
+      this.direct(socketId, "playerStats", { player: conn.player });
+      return;
+    }
+    this.equipUid(conn, uid, target);
     this.direct(socketId, "playerStats", { player: conn.player });
+  }
+
+  unequipSlot(socketId: string, slot: EquipSlot): { ok: boolean; error?: string } {
+    const conn = this.playerBySocket.get(socketId);
+    if (!conn) return { ok: false, error: "Not connected" };
+    const uid = conn.player.equipped[slot];
+    if (!uid) return { ok: false, error: "Empty" };
+    const inst = conn.player.inventory.find((s) => s.uid === uid);
+    if (!inst) {
+      // Equipped uid not in inventory — clear it (legacy state) and fall through.
+      conn.player.equipped[slot] = null;
+    } else {
+      const def = ITEMS[inst.itemId]!;
+      const sh = itemShape(def);
+      // Need to "place" the item back in inventory grid; it's already there with x/y so fine.
+      // But if we never want to enforce that equipped items are absent from grid, we keep them in grid.
+      // For now: equipped items live in inventory with x/y; unequip just clears the equipped pointer.
+      void sh;
+    }
+    conn.player.equipped[slot] = null;
+    // If unequipping a 2-handed weapon's mainHand, the offHand was already null — nothing else to do.
+    this.recomputeStats(conn);
+    this.direct(socketId, "playerStats", { player: conn.player });
+    this.persist(conn);
+    return { ok: true };
+  }
+
+  /** Equip the item with the given uid into the target slot. */
+  private equipUid(conn: Connection, uid: string, target: EquipSlot): void {
+    const inst = conn.player.inventory.find((s) => s.uid === uid);
+    if (!inst) return;
+    const def = ITEMS[inst.itemId];
+    if (!def) return;
+
+    if (isTwoHanded(def)) {
+      // 2H weapons go in mainHand and lock offHand. Move offHand item back to grid pointer.
+      conn.player.equipped.offHand = null;
+      conn.player.equipped.mainHand = inst.uid;
+    } else if (target === "mainHand" || target === "offHand") {
+      // Equipping a 1-handed thing while a 2H is equipped clears the 2H.
+      const mainUid = conn.player.equipped.mainHand;
+      if (mainUid) {
+        const mainInst = conn.player.inventory.find((s) => s.uid === mainUid);
+        if (mainInst && isTwoHanded(ITEMS[mainInst.itemId]!)) {
+          conn.player.equipped.mainHand = null;
+        }
+      }
+      conn.player.equipped[target] = inst.uid;
+    } else {
+      conn.player.equipped[target] = inst.uid;
+    }
+    this.recomputeStats(conn);
+  }
+
+  private recomputeStats(conn: Connection): void {
+    const fresh = deriveStats(
+      conn.player.classId,
+      conn.player.level,
+      conn.player.attrs,
+      conn.player.equipped,
+      conn.player.inventory,
+    );
+    conn.player.stats = fresh;
+    conn.player.maxHp = fresh.hp;
+    conn.player.maxMp = fresh.mp;
+    conn.player.hp = Math.min(conn.player.hp, fresh.hp);
+    conn.player.mp = Math.min(conn.player.mp, fresh.mp);
+    if (conn.player.hp < 1) conn.player.hp = 1;
   }
 
   travel(socketId: string, zoneId: ZoneId): boolean {
@@ -459,24 +548,31 @@ export class World {
     const price = overrides[itemId]?.buyPrice ?? def.buyPrice;
     if (price <= 0) return { ok: false, error: "Not for sale" };
     if (conn.player.gold < price) return { ok: false, error: "Not enough gold" };
+    const placed = addToInventory(conn.player.inventory, itemId, 1);
+    if (!placed) return { ok: false, error: "Bag is full" };
     conn.player.gold -= price;
-    addToInventory(conn.player.inventory, itemId, 1);
     this.direct(socketId, "playerStats", { player: conn.player });
     return { ok: true };
   }
 
-  sellToShop(socketId: string, itemId: string): { ok: boolean; error?: string } {
+  sellToShop(socketId: string, uid: string): { ok: boolean; error?: string } {
     const conn = this.playerBySocket.get(socketId);
     if (!conn) return { ok: false, error: "Not connected" };
     if (conn.player.zone !== "town") return { ok: false, error: "Shop only in town" };
-    const def = ITEMS[itemId];
+    const inst = conn.player.inventory.find((s) => s.uid === uid);
+    if (!inst || inst.qty <= 0) return { ok: false, error: "Don't have it" };
+    const def = ITEMS[inst.itemId];
     if (!def) return { ok: false, error: "Unknown item" };
-    const slot = conn.player.inventory.find((s) => s.itemId === itemId);
-    if (!slot || slot.qty <= 0) return { ok: false, error: "Don't have it" };
-    slot.qty -= 1;
-    if (slot.qty <= 0) conn.player.inventory = conn.player.inventory.filter((s) => s.itemId !== itemId);
+    // Refuse to sell items currently equipped.
+    for (const k of Object.keys(conn.player.equipped) as Array<keyof EquippedSlots>) {
+      if (conn.player.equipped[k] === uid) return { ok: false, error: "Unequip first" };
+    }
+    inst.qty -= 1;
+    if (inst.qty <= 0) {
+      conn.player.inventory = conn.player.inventory.filter((s) => s.uid !== uid);
+    }
     const overrides = getConfig<Record<string, { buyPrice?: number; sellPrice?: number }>>("shopOverrides", {});
-    const price = overrides[itemId]?.sellPrice ?? def.sellPrice;
+    const price = overrides[inst.itemId]?.sellPrice ?? def.sellPrice;
     conn.player.gold += price;
     this.direct(socketId, "playerStats", { player: conn.player });
     return { ok: true };
@@ -509,6 +605,87 @@ export class World {
     return monster;
   }
 
+  /** Try to add an item to the killer's bag; if it doesn't fit, drop it on the floor. */
+  private giveOrDrop(
+    killer: Connection,
+    zoneId: ZoneId,
+    pos: Vec2,
+    itemId: string,
+    qty: number,
+    affixes: Affix[],
+    sockets: (string | null)[],
+  ): void {
+    const placed = addToInventory(killer.player.inventory, itemId, qty, affixes, sockets);
+    if (placed) {
+      this.direct(killer.socketId, "playerStats", { player: killer.player });
+      return;
+    }
+    this.dropFloorItem(zoneId, pos, itemId, qty, affixes, sockets);
+  }
+
+  private dropFloorItem(
+    zoneId: ZoneId,
+    pos: Vec2,
+    itemId: string,
+    qty: number,
+    affixes: Affix[],
+    sockets: (string | null)[],
+  ): void {
+    const z = this.zones.get(zoneId);
+    if (!z) return;
+    // Slight scatter so multiple drops aren't stacked exactly on top of each other.
+    const fx = pos.x + (Math.random() - 0.5) * 32;
+    const fy = pos.y + (Math.random() - 0.5) * 32;
+    const item: FloorItem = {
+      uid: nanoid(10),
+      itemId,
+      qty,
+      affixes,
+      sockets,
+      x: fx,
+      y: fy,
+      zone: zoneId,
+      despawnAt: Date.now() + FLOOR_DESPAWN_MS,
+    };
+    z.floorItems.set(item.uid, item);
+    this.broadcast(zoneId, "floorItemSpawned", { item });
+  }
+
+  private tickFloorPickups(now: number): void {
+    for (const z of this.zones.values()) {
+      for (const [uid, item] of z.floorItems) {
+        if (item.despawnAt <= now) {
+          z.floorItems.delete(uid);
+          this.broadcast(z.id, "floorItemDespawned", { uid });
+          continue;
+        }
+        // First player within radius with room picks it up.
+        for (const conn of z.players.values()) {
+          const dx = conn.player.pos.x - item.x;
+          const dy = conn.player.pos.y - item.y;
+          if (dx * dx + dy * dy > PICKUP_RADIUS * PICKUP_RADIUS) continue;
+          const placed = addToInventory(
+            conn.player.inventory,
+            item.itemId,
+            item.qty,
+            item.affixes,
+            item.sockets,
+          );
+          if (placed) {
+            z.floorItems.delete(uid);
+            this.broadcast(z.id, "floorItemDespawned", { uid });
+            this.direct(conn.socketId, "systemMessage", {
+              text: `Picked up ${ITEMS[item.itemId]?.name ?? item.itemId}`,
+              level: "info",
+            });
+            this.direct(conn.socketId, "playerStats", { player: conn.player });
+            break;
+          }
+        }
+      }
+    }
+  }
+
   private killMonster(killer: Connection, monster: MonsterState): void {
     const z = this.zones.get(monster.zone)!;
     z.monsters.delete(monster.id);
@@ -529,14 +706,22 @@ export class World {
     };
     const matId = lootTable[monster.type];
     if (matId && Math.random() < 0.5) {
-      addToInventory(killer.player.inventory, matId, 1);
+      this.giveOrDrop(killer, monster.zone, monster.pos, matId, 1, [], []);
       loot.push({ itemId: matId, qty: 1 });
     }
     if (Math.random() < 0.08) {
       const drops = ["potion_hp_s", "potion_mp_s"];
       const pick = drops[Math.floor(Math.random() * drops.length)]!;
-      addToInventory(killer.player.inventory, pick, 1);
+      this.giveOrDrop(killer, monster.zone, monster.pos, pick, 1, [], []);
       loot.push({ itemId: pick, qty: 1 });
+    }
+    // Equipment drop with rolled affixes + sockets.
+    if (Math.random() < 0.18) {
+      const rolled = rollItemDrop(monster.level);
+      if (rolled) {
+        this.giveOrDrop(killer, monster.zone, monster.pos, rolled.itemId, 1, rolled.affixes, rolled.sockets);
+        loot.push({ itemId: rolled.itemId, qty: 1 });
+      }
     }
 
     const cfg = effectiveConfig();
@@ -549,6 +734,7 @@ export class World {
         killer.player.level,
         killer.player.attrs,
         killer.player.equipped,
+        killer.player.inventory,
       );
       killer.player.stats = newStats;
       killer.player.maxHp = newStats.hp;
@@ -659,6 +845,8 @@ export class World {
 
     if (now > this.nextMonsterTickAt) this.nextMonsterTickAt = now + 4000;
 
+    this.tickFloorPickups(now);
+
     for (const conn of this.playerBySocket.values()) {
       if (now - conn.lastSavedAt > 15_000) this.persist(conn);
     }
@@ -691,19 +879,41 @@ export class World {
   }
 }
 
-function applyEquipBonuses(base: ReturnType<typeof statsForLevel>, equipped: EquippedSlots) {
+function applyEquipBonuses(
+  base: ReturnType<typeof statsForLevel>,
+  equipped: EquippedSlots,
+  inventory: InventoryItem[],
+): ReturnType<typeof statsForLevel> {
   const out = { ...base };
-  for (const slot of ["weapon", "armor", "trinket"] as const) {
-    const id = equipped[slot];
-    if (!id) continue;
-    const item = ITEMS[id];
-    if (!item || !item.bonuses) continue;
-    if (item.bonuses.attack) out.attack += item.bonuses.attack;
-    if (item.bonuses.defense) out.defense += item.bonuses.defense;
-    if (item.bonuses.hp) out.hp += item.bonuses.hp;
-    if (item.bonuses.mp) out.mp += item.bonuses.mp;
-    if (item.bonuses.speed) out.speed += item.bonuses.speed;
-    if (item.bonuses.crit) out.crit += item.bonuses.crit;
+  const byUid = new Map(inventory.map((it) => [it.uid, it] as const));
+  // Plus any items that exist as bare references (not actually possible after migrate, but safe).
+  const slots: Array<keyof EquippedSlots> = [
+    "head", "chest", "legs", "gloves", "mainHand", "offHand", "amulet", "belt", "ring1", "ring2",
+  ];
+  for (const slot of slots) {
+    const uid = equipped[slot];
+    if (!uid) continue;
+    const inst = byUid.get(uid);
+    const def = inst ? ITEMS[inst.itemId] : ITEMS[uid]; // legacy fallback
+    if (!def) continue;
+    if (def.bonuses) {
+      if (def.bonuses.attack) out.attack += def.bonuses.attack;
+      if (def.bonuses.defense) out.defense += def.bonuses.defense;
+      if (def.bonuses.hp) out.hp += def.bonuses.hp;
+      if (def.bonuses.mp) out.mp += def.bonuses.mp;
+      if (def.bonuses.speed) out.speed += def.bonuses.speed;
+      if (def.bonuses.crit) out.crit += def.bonuses.crit;
+    }
+    if (inst) {
+      for (const aff of inst.affixes) {
+        if (aff.stat === "attack") out.attack += aff.value;
+        else if (aff.stat === "defense") out.defense += aff.value;
+        else if (aff.stat === "hp") out.hp += aff.value;
+        else if (aff.stat === "mp") out.mp += aff.value;
+        else if (aff.stat === "speed") out.speed += aff.value;
+        else if (aff.stat === "crit") out.crit += aff.value;
+      }
+    }
   }
   return out;
 }
@@ -713,9 +923,28 @@ function deriveStats(
   level: number,
   attrs: Attributes,
   equipped: EquippedSlots,
+  inventory: InventoryItem[],
 ): ReturnType<typeof statsForLevel> {
   const base = statsForLevel(classId, level);
-  const bonus = bonusFromAttributes(attrs);
+  // Affix str/agi/luck/magic stack on top of stat-allocated attrs.
+  const bonusAttrs: Attributes = { ...attrs };
+  const byUid = new Map(inventory.map((it) => [it.uid, it] as const));
+  const slots: Array<keyof EquippedSlots> = [
+    "head", "chest", "legs", "gloves", "mainHand", "offHand", "amulet", "belt", "ring1", "ring2",
+  ];
+  for (const slot of slots) {
+    const uid = equipped[slot];
+    if (!uid) continue;
+    const inst = byUid.get(uid);
+    if (!inst) continue;
+    for (const aff of inst.affixes) {
+      if (aff.stat === "str") bonusAttrs.str += aff.value;
+      else if (aff.stat === "agi") bonusAttrs.agi += aff.value;
+      else if (aff.stat === "luck") bonusAttrs.luck += aff.value;
+      else if (aff.stat === "magic") bonusAttrs.magic += aff.value;
+    }
+  }
+  const bonus = bonusFromAttributes(bonusAttrs);
   const summed = {
     hp: base.hp + bonus.hp,
     mp: base.mp + bonus.mp,
@@ -724,19 +953,107 @@ function deriveStats(
     speed: base.speed + bonus.speed,
     crit: base.crit + bonus.crit,
   };
-  return applyEquipBonuses(summed, equipped);
+  return applyEquipBonuses(summed, equipped, inventory);
 }
 
-function addToInventory(inv: InventorySlot[], itemId: string, qty: number): void {
+function migrateEquipped(raw: unknown): EquippedSlots {
+  const next: EquippedSlots = { ...EMPTY_EQUIPPED };
+  if (!raw || typeof raw !== "object") return next;
+  const r = raw as Record<string, unknown>;
+  // Already-new shape — copy known keys.
+  for (const k of Object.keys(EMPTY_EQUIPPED) as Array<keyof EquippedSlots>) {
+    if (typeof r[k] === "string") next[k] = r[k] as string;
+  }
+  // Legacy fields {weapon, armor, trinket} → ignore (uids would be raw item IDs that don't
+  // match any inventory uid). Safer to clear rather than re-equip into wrong slot.
+  return next;
+}
+
+function migrateInventory(raw: unknown): InventoryItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: InventoryItem[] = [];
+  for (const e of raw) {
+    if (!e || typeof e !== "object") continue;
+    const o = e as Record<string, unknown>;
+    if (typeof o.itemId !== "string") continue;
+    const def = ITEMS[o.itemId];
+    if (!def) continue;
+    const item: InventoryItem = {
+      uid: typeof o.uid === "string" ? o.uid : nanoid(10),
+      itemId: o.itemId,
+      qty: Math.max(1, Number(o.qty ?? 1)),
+      x: Number.isFinite(o.x) ? Math.max(0, Math.floor(o.x as number)) : -1,
+      y: Number.isFinite(o.y) ? Math.max(0, Math.floor(o.y as number)) : -1,
+      affixes: Array.isArray(o.affixes) ? (o.affixes as Affix[]) : [],
+      sockets: Array.isArray(o.sockets) ? (o.sockets as (string | null)[]) : [],
+    };
+    out.push(item);
+  }
+  // Auto-pack: assign positions to any items that don't have valid ones, evicting overlaps.
+  const positioned: InventoryItem[] = [];
+  for (const it of out) {
+    const def = ITEMS[it.itemId]!;
+    const sh = itemShape(def);
+    if (it.x < 0 || it.y < 0) {
+      const slot = findFreeSlot(positioned, sh.w, sh.h);
+      if (!slot) continue; // grid full — drop
+      it.x = slot.x;
+      it.y = slot.y;
+    }
+    positioned.push(it);
+  }
+  return positioned;
+}
+
+/** Adds qty of itemId, stacking onto an existing stack if possible, else placing in first free slot. */
+function addToInventory(
+  inv: InventoryItem[],
+  itemId: string,
+  qty: number,
+  affixes: Affix[] = [],
+  sockets: (string | null)[] = [],
+): InventoryItem | null {
   const def = ITEMS[itemId];
-  if (def?.stackable) {
-    const existing = inv.find((s) => s.itemId === itemId);
+  if (!def) return null;
+  if (def.stackable) {
+    const existing = inv.find((s) => s.itemId === itemId && s.affixes.length === 0);
     if (existing) {
       existing.qty += qty;
-      return;
+      return existing;
     }
   }
-  inv.push({ itemId, qty });
+  const sh = itemShape(def);
+  const slot = findFreeSlot(inv, sh.w, sh.h);
+  if (!slot) return null;
+  const item: InventoryItem = {
+    uid: nanoid(10),
+    itemId,
+    qty,
+    x: slot.x,
+    y: slot.y,
+    affixes,
+    sockets,
+  };
+  inv.push(item);
+  return item;
+}
+
+/** Roll a complete drop instance (rarity → affix count → affixes → sockets). */
+function rollItemDrop(monsterLevel: number): {
+  itemId: string;
+  affixes: Affix[];
+  sockets: (string | null)[];
+} | null {
+  const itemId = pickDropItemId(monsterLevel);
+  if (!itemId) return null;
+  const def = ITEMS[itemId]!;
+  const rarity = rollRarity();
+  const affixCount = def.slot === "consumable" || def.slot === "material" ? 0 : RARITY_AFFIX_COUNT[rarity];
+  const affixes = rollAffixes(affixCount);
+  const maxS = def.maxSockets ?? 0;
+  const socketCount = maxS > 0 ? Math.floor(Math.random() * (maxS + 1)) : 0;
+  const sockets: (string | null)[] = Array.from({ length: socketCount }, () => null);
+  return { itemId, affixes, sockets };
 }
 
 function clamp(v: number, lo: number, hi: number): number {

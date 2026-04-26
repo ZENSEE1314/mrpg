@@ -25,6 +25,9 @@ html, body, #root {
   .btn-danger {
     @apply px-3 py-2 rounded-md border border-aether-danger/40 hover:bg-aether-danger/10 text-aether-danger transition text-sm;
   }
+  .btn-warning {
+    @apply px-3 py-2 rounded-md border border-aether-accent/40 hover:bg-aether-accent/10 text-aether-accent transition text-sm;
+  }
   .input {
     @apply w-full px-3 py-2 rounded-md bg-black/40 border border-aether-border focus:outline-none focus:border-aether-accent text-stone-100 text-sm;
   }

@@ -71,6 +71,10 @@ const moveSchema = z.object({ pos: z.object({ x: z.number(), y: z.number() }), f
 const attackSchema = z.object({ targetId: z.string() });
 const skillSchema = z.object({ skillId: z.string(), targetId: z.string().optional() });
 const itemSchema = z.object({ itemId: z.string() });
+const useItemSchema = z.object({ uid: z.string() });
+const unequipSchema = z.object({
+  slot: z.enum(["head", "chest", "legs", "gloves", "mainHand", "offHand", "amulet", "belt", "ring1", "ring2"]),
+});
 const travelSchema = z.object({ zone: z.enum(["town", "meadow", "forest", "crypt", "house"]) });
 const chatSchema = z.object({ text: z.string().min(1).max(200) });
 const agentSchema = z.object({
@@ -130,9 +134,17 @@ io.on("connection", (socket) => {
 
   socket.on("useItem", (raw) => {
     if (!authedCharId) return;
-    const parsed = itemSchema.safeParse(raw);
+    const parsed = useItemSchema.safeParse(raw);
     if (!parsed.success) return;
-    world.useItem(socket.id, parsed.data.itemId);
+    world.useItem(socket.id, parsed.data.uid);
+  });
+
+  socket.on("unequip", (raw, ack) => {
+    if (!authedCharId) return ack?.({ ok: false, error: "Not authed" });
+    const parsed = unequipSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ ok: false, error: "Bad slot" });
+    const result = world.unequipSlot(socket.id, parsed.data.slot);
+    ack?.(result.ok ? { ok: true } : { ok: false, error: result.error ?? "fail" });
   });
 
   socket.on("travel", (raw, ack) => {
@@ -162,9 +174,9 @@ io.on("connection", (socket) => {
 
   socket.on("sellItem", (raw, ack) => {
     if (!authedCharId) return ack?.({ ok: false, error: "Not authed" });
-    const parsed = itemSchema.safeParse(raw);
+    const parsed = useItemSchema.safeParse(raw);
     if (!parsed.success) return ack?.({ ok: false, error: "Bad item" });
-    const result = world.sellToShop(socket.id, parsed.data.itemId);
+    const result = world.sellToShop(socket.id, parsed.data.uid);
     ack?.(result.ok ? { ok: true } : { ok: false, error: result.error ?? "fail" });
   });
 

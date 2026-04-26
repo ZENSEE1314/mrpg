@@ -1,4 +1,5 @@
 import type { ClassId, BaseStats } from "./classes.js";
+import type { EquippedSlots, InventoryItem } from "./items.js";
 
 export interface Vec2 {
   x: number;
@@ -32,7 +33,7 @@ export interface PlayerState {
   pos: Vec2;
   facing: number;
   zone: ZoneId;
-  inventory: InventorySlot[];
+  inventory: InventoryItem[];
   equipped: EquippedSlots;
   agent: AgentState;
 }
@@ -94,15 +95,10 @@ export interface AgentState {
   lastHint: string | null;
 }
 
+// Old types preserved for backwards compatibility with code that hasn't been migrated.
 export interface InventorySlot {
   itemId: string;
   qty: number;
-}
-
-export interface EquippedSlots {
-  weapon: string | null;
-  armor: string | null;
-  trinket: string | null;
 }
 
 export interface MonsterState {
