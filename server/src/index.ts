@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { Server } from "socket.io";
 import { z } from "zod";
 import { config } from "./config.js";
@@ -10,8 +13,10 @@ import { World } from "./game/world.js";
 import { AgentService } from "./game/agent.js";
 import { ITEMS, SHOP_INVENTORY, ZONES, type ZoneId } from "@aetheria/shared";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const app = express();
-app.use(cors({ origin: config.corsOrigin }));
+app.use(cors({ origin: config.corsOrigin === "*" ? true : config.corsOrigin }));
 app.use(express.json({ limit: "32kb" }));
 
 app.use("/api/auth", authRouter);
@@ -28,9 +33,25 @@ app.get("/api/zones", (_req, res) => {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
 
+if (config.serveClient) {
+  const distPath = path.resolve(__dirname, config.clientDistPath);
+  if (existsSync(distPath)) {
+    console.log(`[aetheria] serving static client from ${distPath}`);
+    app.use(express.static(distPath, { maxAge: "1h", index: false }));
+    app.get(/^\/(?!api|socket\.io).*/, (_req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  } else {
+    console.warn(`[aetheria] CLIENT_DIST_PATH not found at ${distPath} — skipping static`);
+  }
+}
+
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: config.corsOrigin, credentials: true },
+  cors: {
+    origin: config.corsOrigin === "*" ? true : config.corsOrigin,
+    credentials: true,
+  },
 });
 
 const broadcast = (zone: ZoneId, event: string, payload: unknown) => {

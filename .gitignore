@@ -5,10 +5,10 @@ build/
 .env
 .env.local
 .DS_Store
-data/*.db
-data/*.db-journal
-data/*.db-shm
-data/*.db-wal
+**/data/*.db
+**/data/*.db-journal
+**/data/*.db-shm
+**/data/*.db-wal
 *.tsbuildinfo
 .vite/
 .cache/

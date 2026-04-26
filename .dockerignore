@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+**/build
+**/.git
+**/.vite
+**/.cache
+**/coverage
+**/data
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.tsbuildinfo
+**/.env
+**/.env.local
+.gitignore
+.dockerignore
+README.md
