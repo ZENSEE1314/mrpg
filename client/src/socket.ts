@@ -82,6 +82,18 @@ function wireGlobalListeners(s: Socket): void {
       text: data.crit ? `${text}!` : text,
       color,
     });
+    // Auto-retaliate hook: if a monster just hit me and I'm not already
+    // attacking, the world scene picks this up and engages.
+    const me = store().me;
+    if (
+      !data.isMonster &&
+      data.amount > 0 &&
+      me &&
+      data.targetId === me.id &&
+      data.sourceId !== me.id
+    ) {
+      store().notifyAttackedBy(data.sourceId);
+    }
   });
 
   s.on("chat", (data) => {

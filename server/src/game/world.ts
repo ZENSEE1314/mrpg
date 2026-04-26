@@ -38,6 +38,34 @@ export type DirectSend = (socketId: string, event: string, payload: unknown) => 
 const COMBAT_TIMEOUT_MS = 5000;
 const REGEN_TICK_MS = 1000;
 
+// Where the player lands when entering a zone, keyed by source zone.
+// "*" is the fallback (e.g. first hello, or zones without an explicit door).
+const ENTRY_POINTS: Partial<Record<ZoneId, Partial<Record<ZoneId | "*", Vec2>>>> = {
+  town: {
+    house: { x: 560, y: 500 },   // arrive at house door (south face of house)
+    meadow: { x: 360, y: 770 },  // next to meadow portal
+    forest: { x: 1280, y: 460 }, // next to forest portal
+    crypt: { x: 800, y: 1070 },  // next to crypt portal
+  },
+  house: {
+    "*": { x: 380, y: 500 },     // safe spot in front of door, inside house
+    town: { x: 380, y: 500 },
+  },
+  meadow: { town: { x: 200, y: 600 } },
+  forest: { town: { x: 200, y: 380 } },
+  crypt: { town: { x: 200, y: 600 } },
+};
+
+function entryPoint(toZone: ZoneId, fromZone: ZoneId): Vec2 {
+  const map = ENTRY_POINTS[toZone];
+  if (map) {
+    const exact = map[fromZone] ?? map["*"];
+    if (exact) return { ...exact };
+  }
+  const z = ZONES[toZone];
+  return { ...z.spawnPos };
+}
+
 export class World {
   private zones: Map<ZoneId, Zone> = new Map();
   private playerBySocket: Map<string, Connection> = new Map();
@@ -344,12 +372,13 @@ export class World {
 
     if (zoneId === "house" && conn.player.zone !== "town") return false;
 
-    const oldZone = this.zones.get(conn.player.zone)!;
+    const fromZone = conn.player.zone;
+    const oldZone = this.zones.get(fromZone)!;
     oldZone.players.delete(conn.player.id);
-    this.broadcast(conn.player.zone, "playerLeft", { playerId: conn.player.id });
+    this.broadcast(fromZone, "playerLeft", { playerId: conn.player.id });
 
     conn.player.zone = zoneId;
-    conn.player.pos = { ...target.spawnPos };
+    conn.player.pos = entryPoint(zoneId, fromZone);
 
     const newZone = this.zones.get(zoneId)!;
     newZone.players.set(conn.player.id, conn);

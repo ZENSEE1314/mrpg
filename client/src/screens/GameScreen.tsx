@@ -20,7 +20,8 @@ interface Props {
 export function GameScreen({ user, character, onLeave }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activePanel, setActivePanel] = useState<"none" | "inventory" | "shop" | "agent" | "travel" | "chat">("none");
+  const activePanel = useGameStore((s) => s.activePanel);
+  const setActivePanel = useGameStore((s) => s.setActivePanel);
   const reset = useGameStore((s) => s.reset);
 
   useEffect(() => {

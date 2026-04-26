@@ -8,7 +8,7 @@ import {
   type PlayerState,
   type ZoneId,
 } from "@aetheria/shared";
-import { useGameStore } from "../../store";
+import { useGameStore, type PanelId } from "../../store";
 import { emitAttack, emitMove, emitTravel } from "../../socket";
 
 interface PlayerSprite {
@@ -32,8 +32,6 @@ interface PlayerSprite {
 
 interface MonsterSprite {
   container: Phaser.GameObjects.Container;
-  body: Phaser.GameObjects.Arc;
-  emoji: Phaser.GameObjects.Text;
   hpBarBg: Phaser.GameObjects.Rectangle;
   hpBarFill: Phaser.GameObjects.Rectangle;
   selectionRing: Phaser.GameObjects.Arc | null;
@@ -41,11 +39,13 @@ interface MonsterSprite {
   targetPos: { x: number; y: number };
 }
 
+type EnterableTarget = { kind: "zone"; zone: ZoneId } | { kind: "panel"; panel: PanelId };
+
 interface Enterable {
   x: number;
   y: number;
   radius: number;
-  zone: ZoneId;
+  target: EnterableTarget;
   label: string;
 }
 
@@ -229,31 +229,128 @@ export class WorldScene extends Phaser.Scene {
     const z = ZONES[zoneId];
 
     if (zoneId === "town") {
-      this.addBuilding(560, 380, "🏠 House", 0x6e4a2b);
-      this.addBuilding(960, 380, "🛒 Shop", 0xc9a14b);
-      this.addBuilding(1160, 720, "🏛 Bank", 0x7d5cff);
+      // House (player home) — south-facing door, zone transition.
+      this.addHouse(560, 380, "Your House", { wall: 0xd6b48a, roof: 0x8a3a3a, door: 0x4a2a14 });
+      this.enterables.push({
+        x: 560,
+        y: 460,
+        radius: 50,
+        target: { kind: "zone", zone: "house" },
+        label: "Enter House",
+      });
+
+      // Shop — opens shop panel.
+      this.addHouse(960, 380, "🛒 General Shop", { wall: 0xe6cfa3, roof: 0xb8862c, door: 0x4a2a14, sign: "🛒" });
+      this.enterables.push({
+        x: 960,
+        y: 460,
+        radius: 50,
+        target: { kind: "panel", panel: "shop" },
+        label: "Enter Shop",
+      });
+
+      // Bank — opens inventory panel for now (vault later).
+      this.addHouse(1160, 720, "🏛 Bank", { wall: 0xc9d4e2, roof: 0x4a4f8a, door: 0x2a2440, sign: "🏛" });
+      this.enterables.push({
+        x: 1160,
+        y: 800,
+        radius: 50,
+        target: { kind: "panel", panel: "inventory" },
+        label: "Open Vault",
+      });
+
       this.addPortal(360, 700, "→ Meadow");
       this.addPortal(1280, 380, "→ Forest");
       this.addPortal(800, 1000, "→ Crypt");
       this.enterables.push(
-        { x: 560, y: 380, radius: 70, zone: "house", label: "Enter House" },
-        { x: 360, y: 700, radius: 55, zone: "meadow", label: "To Meadow" },
-        { x: 1280, y: 380, radius: 55, zone: "forest", label: "To Forest" },
-        { x: 800, y: 1000, radius: 55, zone: "crypt", label: "To Crypt" },
+        { x: 360, y: 700, radius: 55, target: { kind: "zone", zone: "meadow" }, label: "To Meadow" },
+        { x: 1280, y: 380, radius: 55, target: { kind: "zone", zone: "forest" }, label: "To Forest" },
+        { x: 800, y: 1000, radius: 55, target: { kind: "zone", zone: "crypt" }, label: "To Crypt" },
       );
     } else if (zoneId === "house") {
-      this.addBuilding(200, 200, "🛏 Bed", 0xb88862);
-      this.addBuilding(560, 200, "🍳 Kitchen", 0xc9a14b);
-      this.addBuilding(380, 440, "🌱 Garden", 0x6b8e23);
-      this.addPortal(80, 300, "← Town");
-      this.enterables.push({ x: 80, y: 300, radius: 55, zone: "town", label: "Back to Town" });
+      // Inside the house — furniture as decorative buildings, exit door on the west.
+      this.addFurniture(200, 200, "🛏 Bed", 0xb88862);
+      this.addFurniture(560, 200, "🍳 Kitchen", 0xc9a14b);
+      this.addFurniture(380, 440, "🌱 Garden", 0x6b8e23);
+      this.addExitDoor(120, 500, "← Town");
+      this.enterables.push({
+        x: 120,
+        y: 500,
+        radius: 55,
+        target: { kind: "zone", zone: "town" },
+        label: "Back to Town",
+      });
     } else {
       this.addPortal(80, z.height / 2, "← Town");
-      this.enterables.push({ x: 80, y: z.height / 2, radius: 55, zone: "town", label: "Back to Town" });
+      this.enterables.push({
+        x: 80,
+        y: z.height / 2,
+        radius: 55,
+        target: { kind: "zone", zone: "town" },
+        label: "Back to Town",
+      });
     }
   }
 
-  private addBuilding(x: number, y: number, label: string, color: number) {
+  private addHouse(
+    x: number,
+    y: number,
+    label: string,
+    palette: { wall: number; roof: number; door: number; sign?: string },
+  ) {
+    // Drop shadow.
+    const shadow = this.add.ellipse(x, y + 60, 130, 18, 0x000, 0.35);
+
+    // Walls (slightly trapezoidal feel — body rectangle).
+    const wall = this.add.rectangle(x, y + 8, 110, 80, palette.wall).setStrokeStyle(2, 0x000, 0.55);
+
+    // Window panes (glow yellow at night feel).
+    const winL = this.add.rectangle(x - 28, y - 4, 18, 18, 0xffe8a0).setStrokeStyle(2, 0x4a3010);
+    const winLcross = this.add.rectangle(x - 28, y - 4, 18, 2, 0x4a3010);
+    const winLcrossV = this.add.rectangle(x - 28, y - 4, 2, 18, 0x4a3010);
+    const winR = this.add.rectangle(x + 28, y - 4, 18, 18, 0xffe8a0).setStrokeStyle(2, 0x4a3010);
+    const winRcross = this.add.rectangle(x + 28, y - 4, 18, 2, 0x4a3010);
+    const winRcrossV = this.add.rectangle(x + 28, y - 4, 2, 18, 0x4a3010);
+
+    // Door — front center, slightly arched feel via a rounded handle dot.
+    const door = this.add.rectangle(x, y + 30, 26, 36, palette.door).setStrokeStyle(2, 0x000, 0.7);
+    const knob = this.add.circle(x + 9, y + 30, 1.8, 0xffd54f);
+
+    // Roof — drawn as a triangle polygon (overhanging eaves).
+    const roof = this.add.triangle(
+      x,
+      y - 32,
+      -68, 16,
+      0, -36,
+      68, 16,
+      palette.roof,
+    ).setStrokeStyle(2, 0x000, 0.6);
+
+    // Sign emoji floating just under the roof.
+    const sign = palette.sign
+      ? this.add.text(x, y - 18, palette.sign, { fontSize: "20px" }).setOrigin(0.5)
+      : null;
+
+    // Name plate above roof.
+    const txt = this.add
+      .text(x, y - 78, label, {
+        fontFamily: "Cinzel, Georgia, serif",
+        fontSize: "13px",
+        color: "#ffffff",
+        stroke: "#000",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5);
+
+    const parts: Phaser.GameObjects.GameObject[] = [
+      shadow, wall, winL, winLcross, winLcrossV, winR, winRcross, winRcrossV,
+      door, knob, roof, txt,
+    ];
+    if (sign) parts.push(sign);
+    this.deco.add(parts);
+  }
+
+  private addFurniture(x: number, y: number, label: string, color: number) {
     const rect = this.add.rectangle(x, y, 100, 100, color, 0.85).setStrokeStyle(2, 0x000, 0.5);
     const txt = this.add
       .text(x, y - 70, label, {
@@ -267,8 +364,25 @@ export class WorldScene extends Phaser.Scene {
     this.deco.add([rect, txt]);
   }
 
+  private addExitDoor(x: number, y: number, label: string) {
+    const frame = this.add.rectangle(x, y, 50, 70, 0x4a2a14).setStrokeStyle(3, 0x000, 0.7);
+    const door = this.add.rectangle(x, y, 36, 56, 0x6e4a2b).setStrokeStyle(2, 0x2a1808, 0.8);
+    const knob = this.add.circle(x + 10, y, 2.5, 0xffd54f);
+    const txt = this.add
+      .text(x, y - 60, label, {
+        fontFamily: "Cinzel, Georgia, serif",
+        fontSize: "13px",
+        color: "#ffd54f",
+        stroke: "#000",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5);
+    this.deco.add([frame, door, knob, txt]);
+  }
+
   private addPortal(x: number, y: number, label: string) {
     const ring = this.add.circle(x, y, 40, 0x7d5cff, 0.4).setStrokeStyle(3, 0x7d5cff);
+    const inner = this.add.circle(x, y, 22, 0xbda8ff, 0.3);
     const txt = this.add
       .text(x, y + 60, label, {
         fontFamily: "Cinzel, Georgia, serif",
@@ -278,7 +392,7 @@ export class WorldScene extends Phaser.Scene {
         strokeThickness: 3,
       })
       .setOrigin(0.5);
-    this.deco.add([ring, txt]);
+    this.deco.add([ring, inner, txt]);
   }
 
   private spawnPlayerSprite(p: PlayerState, isMe: boolean) {
@@ -351,12 +465,85 @@ export class WorldScene extends Phaser.Scene {
 
   private spawnMonsterSprite(m: MonsterState) {
     const def = MONSTERS[m.type];
-    const body = this.add.circle(0, 0, 18, 0x222, 0.5).setStrokeStyle(2, 0xe05d5d);
-    const emoji = this.add.text(0, 0, def.emoji, { fontSize: "26px" }).setOrigin(0.5);
-    const hpBarBg = this.add.rectangle(0, -28, 36, 5, 0x000, 0.7).setStrokeStyle(1, 0x2a2a3a);
-    const hpBarFill = this.add.rectangle(-18, -28, 36, 4, 0xe05d5d).setOrigin(0, 0.5);
+
+    // Per-type color palette + body parts.
+    const shadow = this.add.ellipse(0, 18, 38, 10, 0x000, 0.35);
+    const parts: Phaser.GameObjects.GameObject[] = [shadow];
+    let bodyShape: Phaser.GameObjects.Shape;
+
+    switch (m.type) {
+      case "slime": {
+        // Half-blob with two dot eyes.
+        const blob = this.add.ellipse(0, 4, 40, 32, 0x5dc88a).setStrokeStyle(2, 0x000, 0.6);
+        const highlight = this.add.ellipse(-8, -4, 12, 6, 0xffffff, 0.45);
+        const eyeL = this.add.circle(-7, 4, 3, 0x000);
+        const eyeR = this.add.circle(7, 4, 3, 0x000);
+        const mouth = this.add.rectangle(0, 13, 10, 2, 0x000);
+        bodyShape = blob;
+        parts.push(blob, highlight, eyeL, eyeR, mouth);
+        break;
+      }
+      case "goblin": {
+        const torso = this.add.rectangle(0, 6, 22, 22, 0x6f8a3a).setStrokeStyle(2, 0x000, 0.7);
+        const head = this.add.circle(0, -10, 10, 0x86a04a).setStrokeStyle(2, 0x000, 0.7);
+        const earL = this.add.triangle(-9, -12, 0, 0, 6, -8, 0, 8, 0x86a04a).setStrokeStyle(2, 0x000, 0.5);
+        const earR = this.add.triangle(9, -12, 0, 0, -6, -8, 0, 8, 0x86a04a).setStrokeStyle(2, 0x000, 0.5);
+        const eyeL = this.add.circle(-3, -10, 1.6, 0xffd54f);
+        const eyeR = this.add.circle(3, -10, 1.6, 0xffd54f);
+        const club = this.add.rectangle(15, 8, 4, 18, 0x6e4a2b).setStrokeStyle(1, 0x000, 0.7);
+        bodyShape = torso;
+        parts.push(earL, earR, torso, head, eyeL, eyeR, club);
+        break;
+      }
+      case "wolf": {
+        const torso = this.add.ellipse(-4, 6, 44, 22, 0x666666).setStrokeStyle(2, 0x000, 0.7);
+        const head = this.add.ellipse(15, -2, 22, 16, 0x6e6e6e).setStrokeStyle(2, 0x000, 0.7);
+        const earL = this.add.triangle(11, -10, 0, 6, 4, -4, -3, 0, 0x4a4a4a);
+        const earR = this.add.triangle(19, -10, 0, 6, 4, -4, -3, 0, 0x4a4a4a);
+        const eye = this.add.circle(20, -2, 1.6, 0xffd54f);
+        const tail = this.add.triangle(-22, 4, 0, 0, -10, -4, -10, 6, 0x4a4a4a);
+        const fang = this.add.rectangle(22, 4, 2, 4, 0xffffff);
+        bodyShape = torso;
+        parts.push(tail, torso, head, earL, earR, eye, fang);
+        break;
+      }
+      case "skeleton": {
+        const torso = this.add.rectangle(0, 8, 18, 22, 0xe2e2ea).setStrokeStyle(2, 0x000, 0.8);
+        const ribL = this.add.rectangle(-5, 4, 8, 1.5, 0x6a6a76);
+        const ribR = this.add.rectangle(5, 4, 8, 1.5, 0x6a6a76);
+        const ribL2 = this.add.rectangle(-5, 10, 8, 1.5, 0x6a6a76);
+        const ribR2 = this.add.rectangle(5, 10, 8, 1.5, 0x6a6a76);
+        const skull = this.add.circle(0, -9, 11, 0xf2f2f8).setStrokeStyle(2, 0x000, 0.8);
+        const eyeL = this.add.circle(-3, -10, 2.2, 0x000);
+        const eyeR = this.add.circle(3, -10, 2.2, 0x000);
+        const jaw = this.add.rectangle(0, -2, 10, 2, 0x000);
+        bodyShape = torso;
+        parts.push(torso, ribL, ribR, ribL2, ribR2, skull, eyeL, eyeR, jaw);
+        break;
+      }
+      case "wraith": {
+        // Ghostly oval, faded at the bottom — rendered as two stacked ellipses.
+        const aura = this.add.ellipse(0, 0, 44, 44, 0x442266, 0.35);
+        const robe = this.add.ellipse(0, 4, 36, 38, 0x5e3a8a, 0.7).setStrokeStyle(2, 0xff5588, 0.8);
+        const eyeL = this.add.circle(-5, -2, 2.2, 0xff3344);
+        const eyeR = this.add.circle(5, -2, 2.2, 0xff3344);
+        const eyeGlowL = this.add.circle(-5, -2, 4.5, 0xff3344, 0.3);
+        const eyeGlowR = this.add.circle(5, -2, 4.5, 0xff3344, 0.3);
+        bodyShape = robe;
+        parts.push(aura, robe, eyeGlowL, eyeGlowR, eyeL, eyeR);
+        break;
+      }
+      default: {
+        const fallback = this.add.circle(0, 0, 18, 0x444444).setStrokeStyle(2, 0xe05d5d);
+        bodyShape = fallback;
+        parts.push(fallback);
+      }
+    }
+
+    const hpBarBg = this.add.rectangle(0, -32, 40, 5, 0x000, 0.7).setStrokeStyle(1, 0x2a2a3a);
+    const hpBarFill = this.add.rectangle(-20, -32, 40, 4, 0xe05d5d).setOrigin(0, 0.5);
     const lvTag = this.add
-      .text(0, -42, `Lv ${m.level} ${def.name}`, {
+      .text(0, -46, `Lv ${m.level} ${def.name}`, {
         fontFamily: "Cinzel, Georgia, serif",
         fontSize: "11px",
         color: "#ffd1d1",
@@ -364,8 +551,9 @@ export class WorldScene extends Phaser.Scene {
         strokeThickness: 3,
       })
       .setOrigin(0.5);
+    parts.push(hpBarBg, hpBarFill, lvTag);
 
-    const container = this.add.container(m.pos.x, m.pos.y, [body, emoji, hpBarBg, hpBarFill, lvTag]);
+    const container = this.add.container(m.pos.x, m.pos.y, parts);
     container.setDepth(9);
     container.setSize(56, 56);
     container.setInteractive({ useHandCursor: true });
@@ -374,10 +562,9 @@ export class WorldScene extends Phaser.Scene {
       this.engageTarget(m.id);
     });
 
+    void bodyShape;
     this.monsters.set(m.id, {
       container,
-      body,
-      emoji,
       hpBarBg,
       hpBarFill,
       selectionRing: null,
@@ -499,6 +686,7 @@ export class WorldScene extends Phaser.Scene {
       sprite.container.y += dy * NETWORK_LERP;
     }
 
+    this.checkAutoRetaliate();
     this.checkEnterables(mySprite);
 
     useGameStore.getState().clearOldFloatings();
@@ -560,12 +748,25 @@ export class WorldScene extends Phaser.Scene {
       if (now - this.lastEnterAt > 1500) {
         this.lastEnterAt = now;
         this.moveTarget = null;
-        this.autoAttackTargetId = null;
-        emitTravel(nearest.zone);
+        if (nearest.target.kind === "zone") {
+          this.autoAttackTargetId = null;
+          emitTravel(nearest.target.zone);
+        } else {
+          useGameStore.getState().setActivePanel(nearest.target.panel);
+        }
       }
     } else {
       this.enterPrompt.setVisible(false);
     }
+  }
+
+  private checkAutoRetaliate() {
+    const incoming = useGameStore.getState().incomingAttackerId;
+    if (!incoming) return;
+    useGameStore.getState().clearIncomingAttacker();
+    if (this.autoAttackTargetId) return;
+    if (!this.monsters.has(incoming)) return;
+    this.engageTarget(incoming);
   }
 
   shutdown() {

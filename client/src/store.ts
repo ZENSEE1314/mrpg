@@ -18,6 +18,8 @@ export interface FloatingNumber {
   ts: number;
 }
 
+export type PanelId = "none" | "inventory" | "shop" | "agent" | "travel" | "chat";
+
 interface GameStore {
   connected: boolean;
   me: PlayerState | null;
@@ -28,6 +30,8 @@ interface GameStore {
   selectedTargetId: string | null;
   floatings: FloatingNumber[];
   agentHints: { hint: string; tag: string; ts: number }[];
+  activePanel: PanelId;
+  incomingAttackerId: string | null;
 
   setConnected: (v: boolean) => void;
   setMe: (p: PlayerState | null) => void;
@@ -41,6 +45,9 @@ interface GameStore {
   pushFloating: (f: Omit<FloatingNumber, "id" | "ts">) => void;
   clearOldFloatings: () => void;
   pushAgentHint: (h: { hint: string; tag: string }) => void;
+  setActivePanel: (p: PanelId) => void;
+  notifyAttackedBy: (sourceId: string) => void;
+  clearIncomingAttacker: () => void;
   reset: () => void;
 }
 
@@ -56,6 +63,8 @@ export const useGameStore = create<GameStore>((set) => ({
   selectedTargetId: null,
   floatings: [],
   agentHints: [],
+  activePanel: "none",
+  incomingAttackerId: null,
 
   setConnected: (v) => set({ connected: v }),
   setMe: (p) => set({ me: p }),
@@ -107,6 +116,9 @@ export const useGameStore = create<GameStore>((set) => ({
     set((s) => ({
       agentHints: [{ ...h, ts: Date.now() }, ...s.agentHints].slice(0, 5),
     })),
+  setActivePanel: (p) => set({ activePanel: p }),
+  notifyAttackedBy: (sourceId) => set({ incomingAttackerId: sourceId }),
+  clearIncomingAttacker: () => set({ incomingAttackerId: null }),
   reset: () =>
     set({
       connected: false,
@@ -118,5 +130,7 @@ export const useGameStore = create<GameStore>((set) => ({
       selectedTargetId: null,
       floatings: [],
       agentHints: [],
+      activePanel: "none",
+      incomingAttackerId: null,
     }),
 }));
