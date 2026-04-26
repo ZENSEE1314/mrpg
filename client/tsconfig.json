@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "allowImportingTsExtensions": false,
+    "paths": {
+      "@aetheria/shared": ["../shared/src/index.ts"],
+      "@aetheria/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src/**/*", "../shared/src/**/*"]
+}

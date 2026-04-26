@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.local
+.DS_Store
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+*.tsbuildinfo
+.vite/
+.cache/
+coverage/

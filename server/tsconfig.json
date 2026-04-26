@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "paths": {
+      "@aetheria/shared": ["../shared/src/index.ts"],
+      "@aetheria/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src/**/*", "../shared/src/**/*"]
+}

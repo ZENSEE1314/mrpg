@@ -1,0 +1,72 @@
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@layer components {
+  .panel {
+    @apply bg-aether-panel border border-aether-border rounded-lg shadow-xl backdrop-blur-sm;
+  }
+  .btn {
+    @apply px-3 py-2 rounded-md border border-aether-border bg-aether-panel hover:border-aether-accent hover:text-aether-accent transition-colors text-sm font-medium;
+  }
+  .btn-primary {
+    @apply px-3 py-2 rounded-md bg-aether-accent text-black hover:brightness-110 transition text-sm font-bold;
+  }
+  .btn-danger {
+    @apply px-3 py-2 rounded-md border border-aether-danger/40 hover:bg-aether-danger/10 text-aether-danger transition text-sm;
+  }
+  .input {
+    @apply w-full px-3 py-2 rounded-md bg-black/40 border border-aether-border focus:outline-none focus:border-aether-accent text-stone-100 text-sm;
+  }
+  .label {
+    @apply text-xs uppercase tracking-wider text-stone-400 mb-1;
+  }
+}
+
+.bar-shell {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid #2a2a3a;
+  border-radius: 9999px;
+  overflow: hidden;
+  height: 8px;
+}
+.bar-fill {
+  height: 100%;
+  transition: width 200ms ease-out;
+}
+
+.skill-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  border: 1px solid #2a2a3a;
+  background: rgba(0, 0, 0, 0.5);
+  font-size: 22px;
+  position: relative;
+  user-select: none;
+}
+.skill-btn .cd-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #f1f1f1;
+}
