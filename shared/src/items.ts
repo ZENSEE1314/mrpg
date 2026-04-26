@@ -206,9 +206,64 @@ export const ITEMS: Record<string, ItemDef> = {
   ring_might: { id: "ring_might", name: "Ring of Might", emoji: "💍", slot: "ring1", rarity: "uncommon", description: "+3 Attack.", buyPrice: 280, sellPrice: 90, bonuses: { attack: 3 }, stackable: false, shape: { w: 1, h: 1 }, maxSockets: 1, minDropLevel: 2, dropWeight: 8 },
 
   // ---------- Materials (1×1, stackable) ----------
-  mat_slime_gel: { id: "mat_slime_gel", name: "Slime Gel", emoji: "🟢", slot: "material", rarity: "common", description: "Sticky and squishy.", buyPrice: 0, sellPrice: 3, stackable: true },
+  mat_slime_gel: { id: "mat_slime_gel", name: "Slime Gel", emoji: "🟢", slot: "material", rarity: "common", description: "Sticky and squishy. Forge fodder.", buyPrice: 0, sellPrice: 3, stackable: true },
   mat_wolf_pelt: { id: "mat_wolf_pelt", name: "Wolf Pelt", emoji: "🐾", slot: "material", rarity: "common", description: "Used for crafting armor.", buyPrice: 0, sellPrice: 12, stackable: true },
   mat_bone: { id: "mat_bone", name: "Old Bone", emoji: "🦴", slot: "material", rarity: "common", description: "Used in dark crafts.", buyPrice: 0, sellPrice: 8, stackable: true },
+  mat_iron_ore: { id: "mat_iron_ore", name: "Iron Ore", emoji: "⛏️", slot: "material", rarity: "common", description: "Smelt at the forge.", buyPrice: 30, sellPrice: 8, stackable: true, dropWeight: 10, minDropLevel: 2 },
+  mat_wood_log: { id: "mat_wood_log", name: "Oak Log", emoji: "🪵", slot: "material", rarity: "common", description: "Burns hot. Forge fuel.", buyPrice: 20, sellPrice: 5, stackable: true, dropWeight: 8, minDropLevel: 1 },
+
+  // ---------- Seeds (consumable but planted from the garden panel) ----------
+  seed_apple: { id: "seed_apple", name: "Apple Seed", emoji: "🌱", slot: "consumable", rarity: "common", description: "Grows into an apple. ~60s to ripen.", buyPrice: 25, sellPrice: 4, stackable: true },
+  seed_berry: { id: "seed_berry", name: "Berry Seed", emoji: "🌱", slot: "consumable", rarity: "common", description: "Grows into a manaberry. ~40s to ripen.", buyPrice: 25, sellPrice: 4, stackable: true },
+
+  // ---------- Garden produce ----------
+  fruit_apple: { id: "fruit_apple", name: "Apple", emoji: "🍎", slot: "consumable", rarity: "common", description: "Restores 80 HP.", buyPrice: 0, sellPrice: 8, consumeEffect: { healHp: 80 }, stackable: true },
+  fruit_berry: { id: "fruit_berry", name: "Manaberry", emoji: "🫐", slot: "consumable", rarity: "common", description: "Restores 60 MP.", buyPrice: 0, sellPrice: 8, consumeEffect: { healMp: 60 }, stackable: true },
+};
+
+// ---------- Garden / Forge ----------
+
+export interface SeedDef {
+  id: string;
+  name: string;
+  emoji: string;
+  growMs: number;
+  /** itemId produced when harvested. */
+  yields: string;
+  yieldQty: number;
+}
+
+export const SEEDS: Record<string, SeedDef> = {
+  seed_apple: { id: "seed_apple", name: "Apple Seed", emoji: "🌱", growMs: 60_000, yields: "fruit_apple", yieldQty: 2 },
+  seed_berry: { id: "seed_berry", name: "Berry Seed", emoji: "🌱", growMs: 40_000, yields: "fruit_berry", yieldQty: 2 },
+};
+
+export const GARDEN_PLOTS = 4;
+
+export interface GardenPlot {
+  seedId: string;
+  startedAt: number;
+  readyAt: number;
+}
+
+export type GardenState = (GardenPlot | null)[];
+
+export const FORGE_BURN_MS = 45_000;
+
+export interface ForgeJob {
+  monsterDropId: string;
+  oreId: string;
+  fuelId: string;
+  startedAt: number;
+  finishesAt: number;
+}
+
+export type ForgeState = ForgeJob | null;
+
+export const FORGE_INPUT_VALID = {
+  monsterDrop: ["mat_slime_gel", "mat_wolf_pelt", "mat_bone"],
+  ore: ["mat_iron_ore"],
+  fuel: ["mat_wood_log"],
 };
 
 export const SHOP_INVENTORY: string[] = [
@@ -219,6 +274,7 @@ export const SHOP_INVENTORY: string[] = [
   "armor_leather", "armor_chain", "robe_cloth",
   "pants_leather", "gloves_leather", "belt_rope",
   "amulet_swift", "ring_focus",
+  "seed_apple", "seed_berry", "mat_iron_ore", "mat_wood_log",
 ];
 
 export const STARTER_INVENTORY: { itemId: string; qty: number }[] = [
@@ -281,6 +337,8 @@ export function gridSlotFree(
   if (x < 0 || y < 0 || x + w > INVENTORY_COLS || y + h > INVENTORY_ROWS) return false;
   for (const it of inventory) {
     if (ignoreUid && it.uid === ignoreUid) continue;
+    // Items with negative position are equipped / off-grid and don't occupy cells.
+    if (it.x < 0 || it.y < 0) continue;
     const def = ITEMS[it.itemId];
     if (!def) continue;
     const sh = itemShape(def);

@@ -1,7 +1,6 @@
 import { useGameStore } from "../store";
 import {
   EQUIP_SLOT_LABEL,
-  EQUIP_SLOT_ORDER,
   INVENTORY_COLS,
   INVENTORY_ROWS,
   ITEMS,
@@ -27,7 +26,22 @@ const RARITY_COLOR: Record<ItemRarity, string> = {
   legendary: "#ffd54f",
 };
 
-const CELL = 40;        // px per grid cell in the inventory panel
+const CELL = 38; // px per inventory grid cell
+
+// Diablo-ish paper-doll layout. Each entry is a slot positioned in % of the
+// 5×7 cell grid that wraps the body silhouette.
+const PAPERDOLL_LAYOUT: Record<EquipSlot, { col: number; row: number }> = {
+  head:     { col: 3, row: 1 },   // top center
+  amulet:   { col: 4, row: 2 },   // upper right (neck)
+  mainHand: { col: 1, row: 3 },   // left arm
+  chest:    { col: 3, row: 3 },   // center body
+  offHand:  { col: 5, row: 3 },   // right arm
+  belt:     { col: 3, row: 4 },   // waist
+  legs:     { col: 3, row: 5 },   // pelvis/legs
+  gloves:   { col: 1, row: 4 },   // off-side hand bracer
+  ring1:    { col: 2, row: 6 },   // boots area, left
+  ring2:    { col: 4, row: 6 },   // boots area, right
+};
 
 export function InventoryPanel({ onClose }: Props) {
   const me = useGameStore((s) => s.me);
@@ -38,52 +52,47 @@ export function InventoryPanel({ onClose }: Props) {
   const equippedUids = new Set(
     Object.values(me.equipped).filter((v): v is string => typeof v === "string"),
   );
-  const selected = selectedUid ? me.inventory.find((it) => it.uid === selectedUid) ?? null : null;
+
+  // Items currently sitting in the bag grid (NOT equipped, NOT off-grid).
+  const gridItems = me.inventory.filter(
+    (it) => !equippedUids.has(it.uid) && it.x >= 0 && it.y >= 0,
+  );
+
+  const selected = selectedUid
+    ? me.inventory.find((it) => it.uid === selectedUid) ?? null
+    : null;
   const selectedDef = selected ? ITEMS[selected.itemId] : null;
+
+  const used = gridItems.reduce((acc, it) => {
+    const def = ITEMS[it.itemId];
+    if (!def) return acc;
+    const sh = itemShape(def);
+    return acc + sh.w * sh.h;
+  }, 0);
+  const total = INVENTORY_COLS * INVENTORY_ROWS;
 
   return (
     <Modal title="Inventory" onClose={onClose}>
-      <div className="text-xs text-stone-400 mb-3">
-        Gold: <span className="text-aether-accent font-bold">{me.gold}</span>
+      <div className="text-xs text-stone-400 mb-3 flex justify-between">
+        <span>
+          Gold: <span className="text-aether-accent font-bold">{me.gold}</span>
+        </span>
+        <span>
+          Bag: <span className="text-stone-200">{used}/{total}</span> cells
+        </span>
       </div>
 
-      {/* Equipment paper-doll */}
-      <div className="grid grid-cols-5 gap-1.5 mb-3">
-        {EQUIP_SLOT_ORDER.map((slot) => {
-          const uid = me.equipped[slot];
-          const inst = uid ? me.inventory.find((it) => it.uid === uid) ?? null : null;
-          const def = inst ? ITEMS[inst.itemId] : null;
-          return (
-            <button
-              key={slot}
-              className="panel p-1 text-left h-14 flex flex-col justify-between hover:border-aether-accent transition"
-              onClick={() => uid && emitUnequip(slot)}
-              title={def ? `${def.name} — click to unequip` : EQUIP_SLOT_LABEL[slot]}
-            >
-              <div className="text-[9px] text-stone-500 leading-none">
-                {EQUIP_SLOT_LABEL[slot]}
-              </div>
-              {def ? (
-                <div className="text-base">
-                  <span>{def.emoji}</span>
-                </div>
-              ) : (
-                <div className="text-[10px] text-stone-600">—</div>
-              )}
-            </button>
-          );
-        })}
-      </div>
+      {/* Diablo-style paper-doll */}
+      <Paperdoll me={me} />
 
-      {/* 6×6 grid */}
+      {/* 6×6 inventory grid (equipped items hidden) */}
       <div
-        className="relative panel p-1 mb-2 mx-auto"
+        className="relative panel p-1 mb-2 mx-auto mt-3"
         style={{
           width: INVENTORY_COLS * CELL + 8,
           height: INVENTORY_ROWS * CELL + 8,
         }}
       >
-        {/* Grid lines */}
         <div
           className="absolute inset-1"
           style={{
@@ -92,11 +101,10 @@ export function InventoryPanel({ onClose }: Props) {
             backgroundSize: `${CELL}px ${CELL}px`,
           }}
         />
-        {me.inventory.map((it) => {
+        {gridItems.map((it) => {
           const def = ITEMS[it.itemId];
           if (!def) return null;
           const sh = itemShape(def);
-          const isEquipped = equippedUids.has(it.uid);
           const isSelected = selectedUid === it.uid;
           const color = RARITY_COLOR[def.rarity];
           return (
@@ -111,9 +119,8 @@ export function InventoryPanel({ onClose }: Props) {
                 height: sh.h * CELL - 4,
                 borderColor: color,
                 outline: isSelected ? `2px solid ${color}` : undefined,
-                opacity: isEquipped ? 0.55 : 1,
               }}
-              title={`${def.name}${isEquipped ? " (equipped)" : ""}`}
+              title={def.name}
             >
               <div className="text-xl leading-none">{def.emoji}</div>
               {it.qty > 1 && (
@@ -132,9 +139,6 @@ export function InventoryPanel({ onClose }: Props) {
                   ))}
                 </div>
               )}
-              {isEquipped && (
-                <div className="absolute top-0 right-0.5 text-[8px] text-aether-accent font-bold">E</div>
-              )}
             </button>
           );
         })}
@@ -145,19 +149,146 @@ export function InventoryPanel({ onClose }: Props) {
         <ItemDetail
           item={selected}
           def={selectedDef}
-          isEquipped={equippedUids.has(selected.uid)}
+          isEquipped={false /* equipped items can't be selected from grid now */}
           inTown={inTown}
           onActed={() => setSelectedUid(null)}
         />
       )}
 
       <div className="text-[10px] text-stone-500 mt-2 text-center">
-        {me.inventory.length} item{me.inventory.length === 1 ? "" : "s"} — bag full → drops land
-        on the floor and vanish in 90s.
+        Click a paper-doll slot to unequip. Bag full → drops land on the floor (90s despawn).
       </div>
     </Modal>
   );
 }
+
+// ---------- Paper-doll ----------
+
+function Paperdoll({ me }: { me: NonNullable<ReturnType<typeof useGameStore.getState>["me"]> }) {
+  // Render-grid container is 5 cols × 7 rows of CELL+gap.
+  const SLOT = 52;
+  const W = 5 * SLOT + 16;
+  const H = 7 * SLOT + 16;
+
+  return (
+    <div className="relative mx-auto" style={{ width: W, height: H }}>
+      {/* Body silhouette behind the slots. */}
+      <BodySilhouette />
+
+      {Object.entries(PAPERDOLL_LAYOUT).map(([slotKey, pos]) => {
+        const slot = slotKey as EquipSlot;
+        const uid = me.equipped[slot];
+        const inst = uid ? me.inventory.find((it) => it.uid === uid) ?? null : null;
+        const def = inst ? ITEMS[inst.itemId] ?? null : null;
+        const left = (pos.col - 1) * SLOT + 8;
+        const top = (pos.row - 1) * SLOT + 8;
+        return (
+          <PaperdollSlot
+            key={slot}
+            slot={slot}
+            inst={inst}
+            def={def}
+            left={left}
+            top={top}
+            size={SLOT - 6}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function PaperdollSlot({
+  slot,
+  inst,
+  def,
+  left,
+  top,
+  size,
+}: {
+  slot: EquipSlot;
+  inst: InventoryItem | null;
+  def: ItemDef | null;
+  left: number;
+  top: number;
+  size: number;
+}) {
+  const filled = !!def;
+  const color = def ? RARITY_COLOR[def.rarity] : undefined;
+  return (
+    <button
+      className="absolute panel flex flex-col items-center justify-center transition hover:brightness-125"
+      style={{
+        left,
+        top,
+        width: size,
+        height: size,
+        borderColor: color,
+        outline: filled ? `1px solid ${color}` : undefined,
+        background: filled ? "rgba(0,0,0,0.55)" : "rgba(0,0,0,0.35)",
+      }}
+      onClick={() => filled && emitUnequip(slot)}
+      title={def ? `${def.name} — click to unequip` : EQUIP_SLOT_LABEL[slot]}
+    >
+      {filled ? (
+        <>
+          <div className="text-lg leading-none">{def.emoji}</div>
+          {inst && inst.affixes.length > 0 && (
+            <div className="absolute bottom-0 right-1 text-[8px] text-aether-accent2 font-bold">
+              +{inst.affixes.length}
+            </div>
+          )}
+          {inst && inst.sockets.length > 0 && (
+            <div className="absolute top-0 left-0.5 flex gap-0.5">
+              {inst.sockets.map((g, i) => (
+                <span
+                  key={i}
+                  className="block w-1 h-1 rounded-full"
+                  style={{ background: g ? "#5dc88a" : "rgba(255,255,255,0.4)" }}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="text-[8px] text-stone-500 uppercase tracking-wider leading-none text-center">
+          {EQUIP_SLOT_LABEL[slot].replace(" ", "\n")}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function BodySilhouette() {
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      viewBox="0 0 100 140"
+      preserveAspectRatio="none"
+      style={{ opacity: 0.13 }}
+    >
+      {/* Head */}
+      <circle cx="50" cy="20" r="11" fill="#fff" />
+      {/* Neck */}
+      <rect x="46" y="29" width="8" height="6" fill="#fff" />
+      {/* Shoulders + torso */}
+      <path
+        d="M28 38 Q50 33 72 38 L70 78 Q70 82 66 84 L60 82 L58 100 L42 100 L40 82 L34 84 Q30 82 30 78 Z"
+        fill="#fff"
+      />
+      {/* Arms */}
+      <path d="M22 40 Q14 60 18 78 L24 78 Q26 60 30 42 Z" fill="#fff" />
+      <path d="M78 40 Q86 60 82 78 L76 78 Q74 60 70 42 Z" fill="#fff" />
+      {/* Belt accent */}
+      <rect x="38" y="82" width="24" height="4" fill="#fff" opacity="0.6" />
+      {/* Legs */}
+      <path d="M40 88 L38 130 L46 132 L48 100 Z" fill="#fff" />
+      <path d="M60 88 L62 130 L54 132 L52 100 Z" fill="#fff" />
+    </svg>
+  );
+}
+
+// ---------- Item detail card ----------
 
 function ItemDetail({
   item,
@@ -174,7 +305,7 @@ function ItemDetail({
 }) {
   const color = RARITY_COLOR[def.rarity];
   return (
-    <div className="panel p-3" style={{ borderColor: color }}>
+    <div className="panel p-3 mt-2" style={{ borderColor: color }}>
       <div className="flex items-center gap-2">
         <div className="text-2xl">{def.emoji}</div>
         <div className="flex-1 min-w-0">
@@ -190,7 +321,13 @@ function ItemDetail({
         </div>
         <div className="flex gap-1">
           {def.slot === "consumable" && (
-            <button className="btn !py-1 !px-2 !text-xs" onClick={() => { emitItem(item.uid); onActed(); }}>
+            <button
+              className="btn !py-1 !px-2 !text-xs"
+              onClick={() => {
+                emitItem(item.uid);
+                onActed();
+              }}
+            >
               Use
             </button>
           )}
@@ -201,7 +338,10 @@ function ItemDetail({
             <button
               className="btn !py-1 !px-2 !text-xs"
               disabled={isEquipped}
-              onClick={() => { emitItem(item.uid); onActed(); }}
+              onClick={() => {
+                emitItem(item.uid);
+                onActed();
+              }}
             >
               {isEquipped ? "Equipped" : "Equip"}
             </button>
@@ -209,7 +349,10 @@ function ItemDetail({
           {inTown && def.sellPrice > 0 && !isEquipped && (
             <button
               className="btn-warning !py-1 !px-2 !text-xs"
-              onClick={() => { emitSell(item.uid); onActed(); }}
+              onClick={() => {
+                emitSell(item.uid);
+                onActed();
+              }}
             >
               Sell {def.sellPrice}g
             </button>
@@ -233,7 +376,10 @@ function ItemDetail({
             <span
               key={i}
               className="inline-block w-2 h-2 rounded-full mx-0.5"
-              style={{ background: g ? "#5dc88a" : "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.4)" }}
+              style={{
+                background: g ? "#5dc88a" : "rgba(255,255,255,0.3)",
+                border: "1px solid rgba(255,255,255,0.4)",
+              }}
             />
           ))}
         </div>

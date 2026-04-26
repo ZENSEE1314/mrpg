@@ -1,5 +1,5 @@
 import type { ClassId, BaseStats } from "./classes.js";
-import type { EquippedSlots, InventoryItem } from "./items.js";
+import type { EquippedSlots, ForgeState, GardenState, InventoryItem } from "./items.js";
 
 export interface Vec2 {
   x: number;
@@ -36,6 +36,10 @@ export interface PlayerState {
   inventory: InventoryItem[];
   equipped: EquippedSlots;
   agent: AgentState;
+  /** Garden plots (per-player home crops) — optional until forge/garden ship. */
+  garden?: GardenState;
+  /** Active forge job — optional until forge/garden ship. */
+  forge?: ForgeState;
 }
 
 // Defaults; admin can override these via game_config in production.

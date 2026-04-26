@@ -450,33 +450,58 @@ export class World {
     if (!uid) return { ok: false, error: "Empty" };
     const inst = conn.player.inventory.find((s) => s.uid === uid);
     if (!inst) {
-      // Equipped uid not in inventory — clear it (legacy state) and fall through.
+      // Legacy state: pointer with no matching grid item. Just clear it.
       conn.player.equipped[slot] = null;
     } else {
-      const def = ITEMS[inst.itemId]!;
+      const def = ITEMS[inst.itemId];
+      if (!def) return { ok: false, error: "Unknown item" };
       const sh = itemShape(def);
-      // Need to "place" the item back in inventory grid; it's already there with x/y so fine.
-      // But if we never want to enforce that equipped items are absent from grid, we keep them in grid.
-      // For now: equipped items live in inventory with x/y; unequip just clears the equipped pointer.
-      void sh;
+      // Equipped items have x = -1 (out of grid). Find a real grid slot to put it back.
+      const free = findFreeSlot(
+        conn.player.inventory.filter((it) => it.uid !== inst.uid),
+        sh.w,
+        sh.h,
+      );
+      if (!free) return { ok: false, error: "No room in bag" };
+      inst.x = free.x;
+      inst.y = free.y;
+      conn.player.equipped[slot] = null;
     }
-    conn.player.equipped[slot] = null;
-    // If unequipping a 2-handed weapon's mainHand, the offHand was already null — nothing else to do.
     this.recomputeStats(conn);
     this.direct(socketId, "playerStats", { player: conn.player });
     this.persist(conn);
     return { ok: true };
   }
 
-  /** Equip the item with the given uid into the target slot. */
+  /** Equip the item with the given uid into the target slot. Removes it from the grid. */
   private equipUid(conn: Connection, uid: string, target: EquipSlot): void {
     const inst = conn.player.inventory.find((s) => s.uid === uid);
     if (!inst) return;
     const def = ITEMS[inst.itemId];
     if (!def) return;
 
+    // First, return any currently-equipped occupants of the slots we're touching.
+    const swapBack = (otherUid: string | null) => {
+      if (!otherUid) return;
+      const other = conn.player.inventory.find((s) => s.uid === otherUid);
+      if (!other) return;
+      const otherDef = ITEMS[other.itemId];
+      if (!otherDef) return;
+      const sh = itemShape(otherDef);
+      const free = findFreeSlot(
+        conn.player.inventory.filter((it) => it.uid !== other.uid && it.uid !== inst.uid),
+        sh.w,
+        sh.h,
+      );
+      // If no room, place wherever (will be off-grid until next equip cycle); not ideal but
+      // unequipSlot guards against this case for the user-driven path.
+      other.x = free?.x ?? -1;
+      other.y = free?.y ?? -1;
+    };
+
     if (isTwoHanded(def)) {
-      // 2H weapons go in mainHand and lock offHand. Move offHand item back to grid pointer.
+      swapBack(conn.player.equipped.mainHand);
+      swapBack(conn.player.equipped.offHand);
       conn.player.equipped.offHand = null;
       conn.player.equipped.mainHand = inst.uid;
     } else if (target === "mainHand" || target === "offHand") {
@@ -485,13 +510,20 @@ export class World {
       if (mainUid) {
         const mainInst = conn.player.inventory.find((s) => s.uid === mainUid);
         if (mainInst && isTwoHanded(ITEMS[mainInst.itemId]!)) {
+          swapBack(mainUid);
           conn.player.equipped.mainHand = null;
         }
       }
+      swapBack(conn.player.equipped[target]);
       conn.player.equipped[target] = inst.uid;
     } else {
+      swapBack(conn.player.equipped[target]);
       conn.player.equipped[target] = inst.uid;
     }
+
+    // Pull the newly-equipped item out of the grid.
+    inst.x = -1;
+    inst.y = -1;
     this.recomputeStats(conn);
   }
 

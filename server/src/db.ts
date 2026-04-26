@@ -89,6 +89,8 @@ ensureColumn("characters", "attr_agi", "attr_agi INTEGER NOT NULL DEFAULT 1");
 ensureColumn("characters", "attr_luck", "attr_luck INTEGER NOT NULL DEFAULT 1");
 ensureColumn("characters", "attr_magic", "attr_magic INTEGER NOT NULL DEFAULT 1");
 ensureColumn("characters", "unspent_points", "unspent_points INTEGER NOT NULL DEFAULT 25");
+ensureColumn("characters", "garden_json", "garden_json TEXT NOT NULL DEFAULT '[null,null,null,null]'");
+ensureColumn("characters", "forge_json", "forge_json TEXT NOT NULL DEFAULT 'null'");
 
 // First user with an account gets admin (so the existing zensee account is grandfathered).
 db.exec(`
@@ -127,6 +129,8 @@ export type CharacterRow = {
   inventory_json: string;
   equipped_json: string;
   agent_json: string;
+  garden_json: string;
+  forge_json: string;
   created_at: number;
   updated_at: number;
 };
