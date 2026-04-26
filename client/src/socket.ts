@@ -27,6 +27,11 @@ function wireGlobalListeners(s: Socket): void {
   });
 
   s.on("zoneSnapshot", (data) => {
+    const me = store().me;
+    if (me) {
+      const updated = data.players.find((p: { id: string }) => p.id === me.id);
+      if (updated) store().setMe(updated);
+    }
     store().setZone(data.zone, data.players, data.monsters);
   });
 
