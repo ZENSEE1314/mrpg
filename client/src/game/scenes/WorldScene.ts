@@ -329,85 +329,173 @@ export class WorldScene extends Phaser.Scene {
     label: string,
     palette: { wall: number; roof: number; door: number; sign?: string },
   ) {
-    // Drop shadow at the foundation line.
-    const shadow = this.add.ellipse(x, y + 60, 140, 20, 0x000, 0.4);
+    // All shapes drawn via Graphics with absolute world coordinates so the
+    // roof actually meets the wall — no Phaser shape-origin guesswork.
+    const g = this.add.graphics();
 
-    // Wall body — shorter than before so the roof dominates.
-    const wall = this.add.rectangle(x, y + 25, 110, 60, palette.wall).setStrokeStyle(2, 0x000, 0.6);
+    // Local geometry (centered around (x, y), wall-top is y_wallTop).
+    const wallW = 110;
+    const wallH = 60;
+    const wallTop = y - 5;
+    const wallBottom = wallTop + wallH;
+    const wallLeft = x - wallW / 2;
+    const wallRight = x + wallW / 2;
 
-    // Foundation stripe (darker line at the base).
-    const foundation = this.add.rectangle(x, y + 53, 110, 6, 0x000, 0.25);
+    const eaveOverhang = 18;
+    const roofPeakH = 50;
+    const roofLeft = wallLeft - eaveOverhang;
+    const roofRight = wallRight + eaveOverhang;
+    const roofBase = wallTop + 1;            // overlap by 1px so no seam
+    const roofPeak = roofBase - roofPeakH;
 
-    // Door (slightly bigger, with a subtle arch via a circle on top).
-    const doorArch = this.add.circle(x, y + 23, 13, palette.door).setStrokeStyle(2, 0x000, 0.7);
-    const door = this.add.rectangle(x, y + 36, 26, 30, palette.door).setStrokeStyle(2, 0x000, 0.7);
-    const knob = this.add.circle(x + 9, y + 36, 2, 0xffd54f);
-    const doorStep = this.add.rectangle(x, y + 53, 32, 4, 0x3a2210);
+    // Drop shadow.
+    g.fillStyle(0x000000, 0.4);
+    g.fillEllipse(x, wallBottom + 5, wallW + 30, 18);
 
-    // Two small cross-paned windows — tucked higher up under the eaves.
-    const winL = this.add.rectangle(x - 33, y + 14, 14, 14, 0xffe8a0).setStrokeStyle(2, 0x3a2210);
-    const winLh = this.add.rectangle(x - 33, y + 14, 14, 1.5, 0x3a2210);
-    const winLv = this.add.rectangle(x - 33, y + 14, 1.5, 14, 0x3a2210);
-    const winR = this.add.rectangle(x + 33, y + 14, 14, 14, 0xffe8a0).setStrokeStyle(2, 0x3a2210);
-    const winRh = this.add.rectangle(x + 33, y + 14, 14, 1.5, 0x3a2210);
-    const winRv = this.add.rectangle(x + 33, y + 14, 1.5, 14, 0x3a2210);
+    // Wall body, with subtle inner highlight on the upper third for depth.
+    const wallShade = darken(palette.wall, 0.18);
+    const wallHighlight = lighten(palette.wall, 0.12);
+    g.fillStyle(palette.wall, 1);
+    g.fillRect(wallLeft, wallTop, wallW, wallH);
+    g.fillStyle(wallHighlight, 0.55);
+    g.fillRect(wallLeft, wallTop, wallW, 8);
+    g.fillStyle(wallShade, 0.5);
+    g.fillRect(wallLeft, wallBottom - 6, wallW, 6);
+    g.lineStyle(2, 0x000000, 0.55);
+    g.strokeRect(wallLeft, wallTop, wallW, wallH);
 
-    // ROOF — large pitched roof that fully caps the building, with overhanging eaves.
-    // Triangle bbox 140w × 60h, centered at (x, y - 35) so its base sits on the wall top.
-    const roof = this.add.triangle(
-      x, y - 35,
-      -72, 30,   // bottom-left (overhang past wall on left)
-      0, -30,    // peak
-      72, 30,    // bottom-right (overhang past wall on right)
-      palette.roof,
-    ).setStrokeStyle(2, 0x000, 0.7);
+    // Foundation stripe.
+    g.fillStyle(0x000000, 0.3);
+    g.fillRect(wallLeft, wallBottom - 2, wallW, 4);
 
-    // Eave shadow stripe right under the roof (across the wall top).
-    const eaveShadow = this.add.rectangle(x, y - 3, 130, 3, 0x000, 0.3);
+    // Roof — drawn as a triangle, then a darker right slope for shading,
+    // then horizontal shingle lines following the pitch.
+    g.fillStyle(palette.roof, 1);
+    g.beginPath();
+    g.moveTo(roofLeft, roofBase);
+    g.lineTo(x, roofPeak);
+    g.lineTo(roofRight, roofBase);
+    g.closePath();
+    g.fillPath();
 
-    // Roof shingle hint — three short horizontal lines following the slope.
-    const shingle1 = this.add.rectangle(x, y - 50, 24, 1, 0x000, 0.45);
-    const shingle2 = this.add.rectangle(x, y - 35, 50, 1, 0x000, 0.4);
-    const shingle3 = this.add.rectangle(x, y - 18, 90, 1, 0x000, 0.35);
+    // Right-slope shadow (right half of the roof, slightly darker).
+    g.fillStyle(darken(palette.roof, 0.18), 0.6);
+    g.beginPath();
+    g.moveTo(x, roofPeak);
+    g.lineTo(roofRight, roofBase);
+    g.lineTo(x, roofBase);
+    g.closePath();
+    g.fillPath();
 
-    // Chimney with a darker cap.
-    const chimney = this.add.rectangle(x + 30, y - 38, 10, 22, 0x4a3018).setStrokeStyle(1, 0x000, 0.7);
-    const chimneyCap = this.add.rectangle(x + 30, y - 50, 14, 4, 0x2a1810);
+    // Roof outline.
+    g.lineStyle(2, 0x000000, 0.7);
+    g.beginPath();
+    g.moveTo(roofLeft, roofBase);
+    g.lineTo(x, roofPeak);
+    g.lineTo(roofRight, roofBase);
+    g.closePath();
+    g.strokePath();
 
-    // Optional emoji sign hung just above the door.
-    const sign = palette.sign
-      ? this.add.text(x, y + 6, palette.sign, { fontSize: "16px" }).setOrigin(0.5)
-      : null;
+    // Shingle lines following the roof slope.
+    g.lineStyle(1, 0x000000, 0.35);
+    for (let i = 1; i <= 4; i += 1) {
+      const t = i / 5;
+      const ny = roofPeak + t * roofPeakH;
+      const halfW = (roofRight - roofLeft) / 2 * t;
+      g.lineBetween(x - halfW, ny, x + halfW, ny);
+    }
+
+    // Chimney (drawn AFTER the roof so it sits on top, with a darker cap).
+    g.fillStyle(0x4a3018, 1);
+    g.fillRect(x + 22, roofPeak + 8, 10, 18);
+    g.lineStyle(1, 0x000000, 0.7);
+    g.strokeRect(x + 22, roofPeak + 8, 10, 18);
+    g.fillStyle(0x2a1810, 1);
+    g.fillRect(x + 19, roofPeak + 6, 16, 4);
+
+    // Eave shadow under the roof, across the top of the wall.
+    g.fillStyle(0x000000, 0.35);
+    g.fillRect(wallLeft, wallTop, wallW, 4);
+
+    // Windows — two cross-paned squares, glowing yellow.
+    drawWindow(g, x - 33, y + 14);
+    drawWindow(g, x + 33, y + 14);
+
+    // Door — arched top + body + step + knob.
+    const doorW = 26;
+    const doorBodyH = 30;
+    const doorTop = y + 22;          // top of door body
+    const doorLeft = x - doorW / 2;
+    g.fillStyle(palette.door, 1);
+    // arch (semicircle on top of the body)
+    g.beginPath();
+    g.arc(x, doorTop, doorW / 2, Math.PI, 0, false);
+    g.closePath();
+    g.fillPath();
+    // body
+    g.fillRect(doorLeft, doorTop, doorW, doorBodyH);
+    // outline
+    g.lineStyle(2, 0x000000, 0.7);
+    g.beginPath();
+    g.moveTo(doorLeft, doorTop + doorBodyH);
+    g.lineTo(doorLeft, doorTop);
+    g.arc(x, doorTop, doorW / 2, Math.PI, 0, false);
+    g.lineTo(doorLeft + doorW, doorTop + doorBodyH);
+    g.closePath();
+    g.strokePath();
+    // door step
+    g.fillStyle(0x3a2210, 1);
+    g.fillRect(x - 18, wallBottom - 1, 36, 4);
+    // knob
+    g.fillStyle(0xffd54f, 1);
+    g.fillCircle(x + 8, doorTop + 16, 2);
+
+    // Optional emoji sign on the wall above the door.
+    const extras: Phaser.GameObjects.GameObject[] = [g];
+    if (palette.sign) {
+      extras.push(this.add.text(x, y + 6, palette.sign, { fontSize: "16px" }).setOrigin(0.5));
+    }
 
     // Name plate above the roof.
-    const txt = this.add
-      .text(x, y - 80, label, {
-        fontFamily: "Cinzel, Georgia, serif",
-        fontSize: "13px",
-        color: "#ffffff",
-        stroke: "#000",
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5);
+    extras.push(
+      this.add
+        .text(x, roofPeak - 14, label, {
+          fontFamily: "Cinzel, Georgia, serif",
+          fontSize: "13px",
+          color: "#ffffff",
+          stroke: "#000",
+          strokeThickness: 3,
+        })
+        .setOrigin(0.5),
+    );
 
-    const parts: Phaser.GameObjects.GameObject[] = [
-      shadow, wall, foundation,
-      winL, winLh, winLv, winR, winRh, winRv,
-      doorArch, door, doorStep, knob,
-      roof, eaveShadow, shingle1, shingle2, shingle3,
-      chimney, chimneyCap,
-      txt,
-    ];
-    if (sign) parts.push(sign);
-    this.deco.add(parts);
+    this.deco.add(extras);
   }
 
   private addPath(x: number, y: number, w: number, h: number) {
-    const path = this.add
-      .rectangle(x, y, w, h, 0xb8a878, 0.55)
-      .setStrokeStyle(1, 0x6e5a3a, 0.4);
-    this.deco.add(path);
-    return path;
+    const g = this.add.graphics();
+    const left = x - w / 2;
+    const top = y - h / 2;
+    g.fillStyle(0xb8a878, 0.55);
+    g.fillRect(left, top, w, h);
+    g.lineStyle(1, 0x6e5a3a, 0.4);
+    g.strokeRect(left, top, w, h);
+    // cobble dots — gives the path a bit of texture without textures.
+    g.fillStyle(0x8e7a52, 0.35);
+    if (w >= h) {
+      // horizontal path: dots along its length
+      for (let cx = left + 14; cx < left + w - 8; cx += 22) {
+        g.fillCircle(cx, y - 4, 1.6);
+        g.fillCircle(cx + 11, y + 4, 1.6);
+      }
+    } else {
+      for (let cy = top + 14; cy < top + h - 8; cy += 22) {
+        g.fillCircle(x - 4, cy, 1.6);
+        g.fillCircle(x + 4, cy + 11, 1.6);
+      }
+    }
+    this.deco.add(g);
+    return g;
   }
 
   private addFurniture(x: number, y: number, label: string, color: number) {
@@ -835,4 +923,40 @@ export class WorldScene extends Phaser.Scene {
   shutdown() {
     this.unsubscribe?.();
   }
+}
+
+// ---------- color + drawing helpers ----------
+
+function lighten(color: number, amount: number): number {
+  const r = Math.min(255, ((color >> 16) & 0xff) + Math.round(255 * amount));
+  const g = Math.min(255, ((color >> 8) & 0xff) + Math.round(255 * amount));
+  const b = Math.min(255, (color & 0xff) + Math.round(255 * amount));
+  return (r << 16) | (g << 8) | b;
+}
+
+function darken(color: number, amount: number): number {
+  const r = Math.max(0, ((color >> 16) & 0xff) - Math.round(255 * amount));
+  const g = Math.max(0, ((color >> 8) & 0xff) - Math.round(255 * amount));
+  const b = Math.max(0, (color & 0xff) - Math.round(255 * amount));
+  return (r << 16) | (g << 8) | b;
+}
+
+function drawWindow(g: Phaser.GameObjects.Graphics, cx: number, cy: number): void {
+  const w = 14;
+  const h = 14;
+  const left = cx - w / 2;
+  const top = cy - h / 2;
+  // glow
+  g.fillStyle(0xffe8a0, 1);
+  g.fillRect(left, top, w, h);
+  // upper highlight to suggest light from inside
+  g.fillStyle(0xffffff, 0.35);
+  g.fillRect(left + 1, top + 1, w - 2, h / 2 - 1);
+  // cross panes
+  g.lineStyle(1.5, 0x3a2210, 1);
+  g.lineBetween(cx, top, cx, top + h);
+  g.lineBetween(left, cy, left + w, cy);
+  // frame
+  g.lineStyle(2, 0x3a2210, 1);
+  g.strokeRect(left, top, w, h);
 }
