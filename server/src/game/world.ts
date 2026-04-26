@@ -48,8 +48,8 @@ const ENTRY_POINTS: Partial<Record<ZoneId, Partial<Record<ZoneId | "*", Vec2>>>>
     crypt: { x: 800, y: 1070 },  // next to crypt portal
   },
   house: {
-    "*": { x: 380, y: 500 },     // safe spot in front of door, inside house
-    town: { x: 380, y: 500 },
+    "*": { x: 400, y: 300 },     // dead center of the 800x600 house
+    town: { x: 400, y: 300 },
   },
   meadow: { town: { x: 200, y: 600 } },
   forest: { town: { x: 200, y: 380 } },

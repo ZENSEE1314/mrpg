@@ -68,9 +68,9 @@ export class WorldScene extends Phaser.Scene {
   private autoAttackTargetId: string | null = null;
   private lastSentMove = 0;
   private lastSentAttack = 0;
-  private lastEnterAt = 0;
   private currentZoneId: ZoneId | null = null;
   private enterables: Enterable[] = [];
+  private armedForEnter = true;
   private unsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -120,10 +120,14 @@ export class WorldScene extends Phaser.Scene {
   ) {
     if (!state.zone) return;
 
-    if (this.currentZoneId !== state.zone) {
+    const zoneChanged = this.currentZoneId !== state.zone;
+    if (zoneChanged) {
       this.changeZone(state.zone);
       this.moveTarget = null;
       this.autoAttackTargetId = null;
+      // Disarm enter triggers so we don't bounce back through the door
+      // we just used. Re-arms when player walks out of all enterables.
+      this.armedForEnter = false;
     }
 
     for (const [id, sprite] of this.players) {
@@ -137,6 +141,12 @@ export class WorldScene extends Phaser.Scene {
       if (existing) {
         existing.state = p;
         existing.targetPos = { x: p.pos.x, y: p.pos.y };
+        // On zone change, the existing local sprite for me must teleport to
+        // the server-authoritative entry point — otherwise it stays where
+        // I last walked in the old zone.
+        if (zoneChanged) {
+          existing.container.setPosition(p.pos.x, p.pos.y);
+        }
         const hpRatio = p.maxHp > 0 ? p.hp / p.maxHp : 0;
         existing.hpBarFill.width = Math.max(0, hpRatio * 36);
         existing.hpBarFill.fillColor = hpRatio > 0.5 ? 0x5dc88a : hpRatio > 0.25 ? 0xffd54f : 0xe05d5d;
@@ -229,6 +239,24 @@ export class WorldScene extends Phaser.Scene {
     const z = ZONES[zoneId];
 
     if (zoneId === "town") {
+      // Stone walking paths (drawn first so buildings sit on them).
+      // Main horizontal road at y=600, vertical road at x=800, plus branches.
+      this.addPath(800, 600, 1300, 56);            // east-west road
+      this.addPath(800, 600, 56, 900);             // north-south road
+      this.addPath(560, 480, 56, 240);             // path to your house
+      this.addPath(960, 480, 56, 240);             // path to shop
+      this.addPath(1080, 720, 200, 56);            // path to bank (horizontal stub)
+      this.addPath(1160, 760, 56, 120);            // path to bank (vertical stub)
+      this.addPath(360, 700, 56, 200);             // path to meadow portal
+      this.addPath(1280, 380, 56, 220);            // path to forest portal (above road)
+      this.addPath(1280, 490, 200, 56);            // path connecting forest to main road
+      this.addPath(800, 1000, 56, 200);            // path to crypt portal
+      // Plaza at center
+      const plaza = this.add
+        .circle(800, 600, 70, 0xb8a878, 0.45)
+        .setStrokeStyle(2, 0x6e5a3a, 0.4);
+      this.deco.add(plaza);
+
       // House (player home) — south-facing door, zone transition.
       this.addHouse(560, 380, "Your House", { wall: 0xd6b48a, roof: 0x8a3a3a, door: 0x4a2a14 });
       this.enterables.push({
@@ -281,10 +309,13 @@ export class WorldScene extends Phaser.Scene {
         label: "Back to Town",
       });
     } else {
-      this.addPortal(80, z.height / 2, "← Town");
+      // Outdoor zones — single road eastward from town portal.
+      const portalY = z.height / 2;
+      this.addPath(z.width / 2, portalY, z.width - 200, 50);
+      this.addPortal(80, portalY, "← Town");
       this.enterables.push({
         x: 80,
-        y: z.height / 2,
+        y: portalY,
         radius: 55,
         target: { kind: "zone", zone: "town" },
         label: "Back to Town",
@@ -298,42 +329,59 @@ export class WorldScene extends Phaser.Scene {
     label: string,
     palette: { wall: number; roof: number; door: number; sign?: string },
   ) {
-    // Drop shadow.
-    const shadow = this.add.ellipse(x, y + 60, 130, 18, 0x000, 0.35);
+    // Drop shadow at the foundation line.
+    const shadow = this.add.ellipse(x, y + 60, 140, 20, 0x000, 0.4);
 
-    // Walls (slightly trapezoidal feel — body rectangle).
-    const wall = this.add.rectangle(x, y + 8, 110, 80, palette.wall).setStrokeStyle(2, 0x000, 0.55);
+    // Wall body — shorter than before so the roof dominates.
+    const wall = this.add.rectangle(x, y + 25, 110, 60, palette.wall).setStrokeStyle(2, 0x000, 0.6);
 
-    // Window panes (glow yellow at night feel).
-    const winL = this.add.rectangle(x - 28, y - 4, 18, 18, 0xffe8a0).setStrokeStyle(2, 0x4a3010);
-    const winLcross = this.add.rectangle(x - 28, y - 4, 18, 2, 0x4a3010);
-    const winLcrossV = this.add.rectangle(x - 28, y - 4, 2, 18, 0x4a3010);
-    const winR = this.add.rectangle(x + 28, y - 4, 18, 18, 0xffe8a0).setStrokeStyle(2, 0x4a3010);
-    const winRcross = this.add.rectangle(x + 28, y - 4, 18, 2, 0x4a3010);
-    const winRcrossV = this.add.rectangle(x + 28, y - 4, 2, 18, 0x4a3010);
+    // Foundation stripe (darker line at the base).
+    const foundation = this.add.rectangle(x, y + 53, 110, 6, 0x000, 0.25);
 
-    // Door — front center, slightly arched feel via a rounded handle dot.
-    const door = this.add.rectangle(x, y + 30, 26, 36, palette.door).setStrokeStyle(2, 0x000, 0.7);
-    const knob = this.add.circle(x + 9, y + 30, 1.8, 0xffd54f);
+    // Door (slightly bigger, with a subtle arch via a circle on top).
+    const doorArch = this.add.circle(x, y + 23, 13, palette.door).setStrokeStyle(2, 0x000, 0.7);
+    const door = this.add.rectangle(x, y + 36, 26, 30, palette.door).setStrokeStyle(2, 0x000, 0.7);
+    const knob = this.add.circle(x + 9, y + 36, 2, 0xffd54f);
+    const doorStep = this.add.rectangle(x, y + 53, 32, 4, 0x3a2210);
 
-    // Roof — drawn as a triangle polygon (overhanging eaves).
+    // Two small cross-paned windows — tucked higher up under the eaves.
+    const winL = this.add.rectangle(x - 33, y + 14, 14, 14, 0xffe8a0).setStrokeStyle(2, 0x3a2210);
+    const winLh = this.add.rectangle(x - 33, y + 14, 14, 1.5, 0x3a2210);
+    const winLv = this.add.rectangle(x - 33, y + 14, 1.5, 14, 0x3a2210);
+    const winR = this.add.rectangle(x + 33, y + 14, 14, 14, 0xffe8a0).setStrokeStyle(2, 0x3a2210);
+    const winRh = this.add.rectangle(x + 33, y + 14, 14, 1.5, 0x3a2210);
+    const winRv = this.add.rectangle(x + 33, y + 14, 1.5, 14, 0x3a2210);
+
+    // ROOF — large pitched roof that fully caps the building, with overhanging eaves.
+    // Triangle bbox 140w × 60h, centered at (x, y - 35) so its base sits on the wall top.
     const roof = this.add.triangle(
-      x,
-      y - 32,
-      -68, 16,
-      0, -36,
-      68, 16,
+      x, y - 35,
+      -72, 30,   // bottom-left (overhang past wall on left)
+      0, -30,    // peak
+      72, 30,    // bottom-right (overhang past wall on right)
       palette.roof,
-    ).setStrokeStyle(2, 0x000, 0.6);
+    ).setStrokeStyle(2, 0x000, 0.7);
 
-    // Sign emoji floating just under the roof.
+    // Eave shadow stripe right under the roof (across the wall top).
+    const eaveShadow = this.add.rectangle(x, y - 3, 130, 3, 0x000, 0.3);
+
+    // Roof shingle hint — three short horizontal lines following the slope.
+    const shingle1 = this.add.rectangle(x, y - 50, 24, 1, 0x000, 0.45);
+    const shingle2 = this.add.rectangle(x, y - 35, 50, 1, 0x000, 0.4);
+    const shingle3 = this.add.rectangle(x, y - 18, 90, 1, 0x000, 0.35);
+
+    // Chimney with a darker cap.
+    const chimney = this.add.rectangle(x + 30, y - 38, 10, 22, 0x4a3018).setStrokeStyle(1, 0x000, 0.7);
+    const chimneyCap = this.add.rectangle(x + 30, y - 50, 14, 4, 0x2a1810);
+
+    // Optional emoji sign hung just above the door.
     const sign = palette.sign
-      ? this.add.text(x, y - 18, palette.sign, { fontSize: "20px" }).setOrigin(0.5)
+      ? this.add.text(x, y + 6, palette.sign, { fontSize: "16px" }).setOrigin(0.5)
       : null;
 
-    // Name plate above roof.
+    // Name plate above the roof.
     const txt = this.add
-      .text(x, y - 78, label, {
+      .text(x, y - 80, label, {
         fontFamily: "Cinzel, Georgia, serif",
         fontSize: "13px",
         color: "#ffffff",
@@ -343,11 +391,23 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const parts: Phaser.GameObjects.GameObject[] = [
-      shadow, wall, winL, winLcross, winLcrossV, winR, winRcross, winRcrossV,
-      door, knob, roof, txt,
+      shadow, wall, foundation,
+      winL, winLh, winLv, winR, winRh, winRv,
+      doorArch, door, doorStep, knob,
+      roof, eaveShadow, shingle1, shingle2, shingle3,
+      chimney, chimneyCap,
+      txt,
     ];
     if (sign) parts.push(sign);
     this.deco.add(parts);
+  }
+
+  private addPath(x: number, y: number, w: number, h: number) {
+    const path = this.add
+      .rectangle(x, y, w, h, 0xb8a878, 0.55)
+      .setStrokeStyle(1, 0x6e5a3a, 0.4);
+    this.deco.add(path);
+    return path;
   }
 
   private addFurniture(x: number, y: number, label: string, color: number) {
@@ -738,25 +798,28 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    if (nearest) {
-      this.enterPrompt
-        .setText(`▼ ${nearest.label} ▼`)
-        .setPosition(mySprite.container.x, mySprite.container.y - 60)
-        .setVisible(true);
-
-      const now = Date.now();
-      if (now - this.lastEnterAt > 1500) {
-        this.lastEnterAt = now;
-        this.moveTarget = null;
-        if (nearest.target.kind === "zone") {
-          this.autoAttackTargetId = null;
-          emitTravel(nearest.target.zone);
-        } else {
-          useGameStore.getState().setActivePanel(nearest.target.panel);
-        }
-      }
-    } else {
+    if (!nearest) {
+      // Walked away from all triggers → re-arm.
       this.enterPrompt.setVisible(false);
+      this.armedForEnter = true;
+      return;
+    }
+
+    this.enterPrompt
+      .setText(`▼ ${nearest.label} ▼`)
+      .setPosition(mySprite.container.x, mySprite.container.y - 60)
+      .setVisible(true);
+
+    if (!this.armedForEnter) return;
+
+    // Fire exactly once per (walk-out, walk-in) cycle.
+    this.armedForEnter = false;
+    this.moveTarget = null;
+    if (nearest.target.kind === "zone") {
+      this.autoAttackTargetId = null;
+      emitTravel(nearest.target.zone);
+    } else {
+      useGameStore.getState().setActivePanel(nearest.target.panel);
     }
   }
 
