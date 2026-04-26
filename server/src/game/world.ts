@@ -35,16 +35,34 @@ interface Zone {
 export type Broadcast = (zone: ZoneId, event: string, payload: unknown) => void;
 export type DirectSend = (socketId: string, event: string, payload: unknown) => void;
 
+const COMBAT_TIMEOUT_MS = 5000;
+const REGEN_TICK_MS = 1000;
+
 export class World {
   private zones: Map<ZoneId, Zone> = new Map();
   private playerBySocket: Map<string, Connection> = new Map();
   private playerByCharId: Map<string, Connection> = new Map();
   private nextMonsterTickAt = 0;
+  private nextRegenAt = 0;
+  private combatUntil: Map<string, number> = new Map();
 
   constructor(private broadcast: Broadcast, private direct: DirectSend) {
     for (const z of Object.values(ZONES)) {
       this.zones.set(z.id, { id: z.id, players: new Map(), monsters: new Map() });
     }
+  }
+
+  private markInCombat(playerId: string): void {
+    this.combatUntil.set(playerId, Date.now() + COMBAT_TIMEOUT_MS);
+  }
+
+  private isInCombat(playerId: string, now: number): boolean {
+    return (this.combatUntil.get(playerId) ?? 0) > now;
+  }
+
+  private mitigatedDamage(rawAttack: number, defense: number): number {
+    const mitigated = (rawAttack * 100) / (100 + Math.max(0, defense));
+    return Math.max(1, Math.round(mitigated));
   }
 
   // ---------- character (de)serialization ----------
@@ -193,9 +211,10 @@ export class World {
     if (dist > def.attackRange + 10) return;
 
     conn.lastAttackAt = now;
+    this.markInCombat(conn.player.id);
     const isCrit = Math.random() * 100 < conn.player.stats.crit;
-    const baseDmg = Math.max(1, conn.player.stats.attack - MONSTERS[monster.type].baseDefense);
-    const dmg = Math.round(baseDmg * (isCrit ? 1.8 : 1) * (0.85 + Math.random() * 0.3));
+    const baseDmg = this.mitigatedDamage(conn.player.stats.attack, MONSTERS[monster.type].baseDefense);
+    const dmg = Math.max(1, Math.round(baseDmg * (isCrit ? 1.8 : 1) * (0.85 + Math.random() * 0.3)));
     monster.hp = Math.max(0, monster.hp - dmg);
     monster.aggroOn = conn.player.id;
 
@@ -253,8 +272,9 @@ export class World {
         this.direct(socketId, "playerStats", { player: conn.player });
         return;
       }
-      const baseDmg = Math.max(1, conn.player.stats.attack - MONSTERS[monster.type].baseDefense);
-      const dmg = Math.round(baseDmg * skill.damageMultiplier);
+      this.markInCombat(conn.player.id);
+      const baseDmg = this.mitigatedDamage(conn.player.stats.attack, MONSTERS[monster.type].baseDefense);
+      const dmg = Math.max(1, Math.round(baseDmg * skill.damageMultiplier));
       monster.hp = Math.max(0, monster.hp - dmg);
       monster.aggroOn = conn.player.id;
       this.broadcast(conn.player.zone, "damageDealt", {
@@ -491,12 +511,13 @@ export class World {
             this.broadcast(z.id, "monsterUpdated", { monster });
           } else {
             const lastKey = `mAtk_${monster.id}`;
-            const last = (target.skillCooldowns[lastKey] ?? 0);
+            const last = target.skillCooldowns[lastKey] ?? 0;
             if (now - last >= def.attackInterval) {
               target.skillCooldowns[lastKey] = now;
-              const baseDmg = Math.max(1, def.baseAttack - target.player.stats.defense);
-              const dmg = Math.round(baseDmg * (0.85 + Math.random() * 0.3));
+              const baseDmg = this.mitigatedDamage(def.baseAttack, target.player.stats.defense);
+              const dmg = Math.max(1, Math.round(baseDmg * (0.85 + Math.random() * 0.3)));
               target.player.hp = Math.max(0, target.player.hp - dmg);
+              this.markInCombat(target.player.id);
               this.broadcast(z.id, "damageDealt", {
                 sourceId: monster.id,
                 targetId: target.player.id,
@@ -514,12 +535,25 @@ export class World {
         }
       }
 
-      for (const conn of z.players.values()) {
-        if (conn.player.hp < conn.player.maxHp) {
-          conn.player.hp = Math.min(conn.player.maxHp, conn.player.hp + 1);
-        }
-        if (conn.player.mp < conn.player.maxMp) {
-          conn.player.mp = Math.min(conn.player.maxMp, conn.player.mp + 1);
+    }
+
+    if (now >= this.nextRegenAt) {
+      this.nextRegenAt = now + REGEN_TICK_MS;
+      for (const z of this.zones.values()) {
+        for (const conn of z.players.values()) {
+          if (this.isInCombat(conn.player.id, now)) continue;
+          const hpRegen = Math.max(2, Math.round(conn.player.maxHp * 0.04));
+          const mpRegen = Math.max(1, Math.round(conn.player.maxMp * 0.05));
+          let changed = false;
+          if (conn.player.hp < conn.player.maxHp) {
+            conn.player.hp = Math.min(conn.player.maxHp, conn.player.hp + hpRegen);
+            changed = true;
+          }
+          if (conn.player.mp < conn.player.maxMp) {
+            conn.player.mp = Math.min(conn.player.maxMp, conn.player.mp + mpRegen);
+            changed = true;
+          }
+          if (changed) this.direct(conn.socketId, "playerStats", { player: conn.player });
         }
       }
     }
