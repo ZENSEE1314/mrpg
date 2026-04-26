@@ -1,14 +1,19 @@
 import { nanoid } from "nanoid";
 import {
   CLASSES,
+  DEFAULT_GAME_CONFIG,
   ITEMS,
   MONSTERS,
   ZONES,
+  attributeUpgradeCost,
+  bonusFromAttributes,
   statsForLevel,
-  xpForLevel,
   type AgentState,
+  type AttributeId,
+  type Attributes,
   type ClassId,
   type EquippedSlots,
+  type GameConfig,
   type InventorySlot,
   type MonsterState,
   type MonsterType,
@@ -16,7 +21,15 @@ import {
   type Vec2,
   type ZoneId,
 } from "@aetheria/shared";
-import { db, type CharacterRow } from "../db.js";
+import { db, getConfig, type CharacterRow } from "../db.js";
+
+function effectiveConfig(): GameConfig {
+  return getConfig<GameConfig>("gameConfig", DEFAULT_GAME_CONFIG);
+}
+
+function xpForLevelDynamic(level: number, cfg: GameConfig = effectiveConfig()): number {
+  return Math.floor(cfg.xpBase * Math.pow(level, cfg.xpExp));
+}
 
 interface Connection {
   socketId: string;
@@ -39,17 +52,17 @@ const COMBAT_TIMEOUT_MS = 5000;
 const REGEN_TICK_MS = 1000;
 
 // Where the player lands when entering a zone, keyed by source zone.
-// "*" is the fallback (e.g. first hello, or zones without an explicit door).
+// All entries put you NEXT TO the entrance, not at the center.
 const ENTRY_POINTS: Partial<Record<ZoneId, Partial<Record<ZoneId | "*", Vec2>>>> = {
   town: {
     house: { x: 560, y: 500 },   // arrive at house door (south face of house)
-    meadow: { x: 360, y: 770 },  // next to meadow portal
-    forest: { x: 1280, y: 460 }, // next to forest portal
-    crypt: { x: 800, y: 1070 },  // next to crypt portal
+    meadow: { x: 360, y: 780 },  // next to meadow portal in town
+    forest: { x: 1280, y: 470 }, // next to forest portal in town
+    crypt: { x: 800, y: 1080 },  // next to crypt portal in town
   },
   house: {
-    "*": { x: 400, y: 300 },     // dead center of the 800x600 house
-    town: { x: 400, y: 300 },
+    "*": { x: 120, y: 440 },     // inside, just stepping past the front door
+    town: { x: 120, y: 440 },
   },
   meadow: { town: { x: 200, y: 600 } },
   forest: { town: { x: 200, y: 380 } },
@@ -99,11 +112,16 @@ export class World {
     const row = db.prepare("SELECT * FROM characters WHERE id = ?").get(charId) as CharacterRow | undefined;
     if (!row) throw new Error("Character not found");
     const classId = row.class_id as ClassId;
-    const baseStats = statsForLevel(classId, row.level);
     const equipped: EquippedSlots = JSON.parse(row.equipped_json);
     const inventory: InventorySlot[] = JSON.parse(row.inventory_json);
     const agent: AgentState = JSON.parse(row.agent_json);
-    const stats = applyEquipBonuses(baseStats, equipped);
+    const attrs: Attributes = {
+      str: row.attr_str,
+      agi: row.attr_agi,
+      luck: row.attr_luck,
+      magic: row.attr_magic,
+    };
+    const stats = deriveStats(classId, row.level, attrs, equipped);
 
     const player: PlayerState = {
       id: row.id,
@@ -118,6 +136,8 @@ export class World {
       mp: clampInt(row.mp, 0, stats.mp),
       maxMp: stats.mp,
       stats,
+      attrs,
+      unspentPoints: row.unspent_points,
       pos: { x: row.pos_x, y: row.pos_y },
       facing: 0,
       zone: row.zone as ZoneId,
@@ -140,6 +160,7 @@ export class World {
     db.prepare(
       `UPDATE characters SET
         level = ?, xp = ?, gold = ?, hp = ?, mp = ?, zone = ?, pos_x = ?, pos_y = ?,
+        attr_str = ?, attr_agi = ?, attr_luck = ?, attr_magic = ?, unspent_points = ?,
         inventory_json = ?, equipped_json = ?, agent_json = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
@@ -151,6 +172,11 @@ export class World {
       p.zone,
       p.pos.x,
       p.pos.y,
+      p.attrs.str,
+      p.attrs.agi,
+      p.attrs.luck,
+      p.attrs.magic,
+      p.unspentPoints,
       JSON.stringify(p.inventory),
       JSON.stringify(p.equipped),
       JSON.stringify(p.agent),
@@ -158,6 +184,35 @@ export class World {
       p.id,
     );
     conn.lastSavedAt = Date.now();
+  }
+
+  // ---------- attribute allocation ----------
+
+  allocateStat(socketId: string, stat: AttributeId): { ok: boolean; error?: string } {
+    const conn = this.playerBySocket.get(socketId);
+    if (!conn) return { ok: false, error: "Not connected" };
+    const cfg = effectiveConfig();
+    const current = conn.player.attrs[stat];
+    const cost = attributeUpgradeCost(current, cfg);
+    if (conn.player.unspentPoints < cost) {
+      return { ok: false, error: `Need ${cost} points (have ${conn.player.unspentPoints})` };
+    }
+    conn.player.attrs[stat] = current + 1;
+    conn.player.unspentPoints -= cost;
+    // Re-derive combat stats (HP/MP caps may shift; preserve current/max ratio).
+    const before = { hp: conn.player.hp, mp: conn.player.mp, maxHp: conn.player.maxHp, maxMp: conn.player.maxMp };
+    const fresh = deriveStats(conn.player.classId, conn.player.level, conn.player.attrs, conn.player.equipped);
+    conn.player.stats = fresh;
+    conn.player.maxHp = fresh.hp;
+    conn.player.maxMp = fresh.mp;
+    conn.player.hp = Math.min(fresh.hp, before.hp + (fresh.hp - before.maxHp));
+    conn.player.mp = Math.min(fresh.mp, before.mp + (fresh.mp - before.maxMp));
+    if (conn.player.hp < 1) conn.player.hp = 1;
+    if (conn.player.mp < 0) conn.player.mp = 0;
+
+    this.direct(socketId, "playerStats", { player: conn.player });
+    this.persist(conn);
+    return { ok: true };
   }
 
   // ---------- connection lifecycle ----------
@@ -351,8 +406,12 @@ export class World {
       if (prev) {
         addToInventory(conn.player.inventory, prev, 1);
       }
-      const baseStats = statsForLevel(conn.player.classId, conn.player.level);
-      const newStats = applyEquipBonuses(baseStats, conn.player.equipped);
+      const newStats = deriveStats(
+        conn.player.classId,
+        conn.player.level,
+        conn.player.attrs,
+        conn.player.equipped,
+      );
       conn.player.stats = newStats;
       conn.player.maxHp = newStats.hp;
       conn.player.maxMp = newStats.mp;
@@ -396,9 +455,11 @@ export class World {
     if (conn.player.zone !== "town") return { ok: false, error: "Shop only in town" };
     const def = ITEMS[itemId];
     if (!def) return { ok: false, error: "Unknown item" };
-    if (def.buyPrice <= 0) return { ok: false, error: "Not for sale" };
-    if (conn.player.gold < def.buyPrice) return { ok: false, error: "Not enough gold" };
-    conn.player.gold -= def.buyPrice;
+    const overrides = getConfig<Record<string, { buyPrice?: number; sellPrice?: number }>>("shopOverrides", {});
+    const price = overrides[itemId]?.buyPrice ?? def.buyPrice;
+    if (price <= 0) return { ok: false, error: "Not for sale" };
+    if (conn.player.gold < price) return { ok: false, error: "Not enough gold" };
+    conn.player.gold -= price;
     addToInventory(conn.player.inventory, itemId, 1);
     this.direct(socketId, "playerStats", { player: conn.player });
     return { ok: true };
@@ -414,7 +475,9 @@ export class World {
     if (!slot || slot.qty <= 0) return { ok: false, error: "Don't have it" };
     slot.qty -= 1;
     if (slot.qty <= 0) conn.player.inventory = conn.player.inventory.filter((s) => s.itemId !== itemId);
-    conn.player.gold += def.sellPrice;
+    const overrides = getConfig<Record<string, { buyPrice?: number; sellPrice?: number }>>("shopOverrides", {});
+    const price = overrides[itemId]?.sellPrice ?? def.sellPrice;
+    conn.player.gold += price;
     this.direct(socketId, "playerStats", { player: conn.player });
     return { ok: true };
   }
@@ -476,10 +539,17 @@ export class World {
       loot.push({ itemId: pick, qty: 1 });
     }
 
-    while (killer.player.xp >= xpForLevel(killer.player.level)) {
-      killer.player.xp -= xpForLevel(killer.player.level);
+    const cfg = effectiveConfig();
+    while (killer.player.xp >= xpForLevelDynamic(killer.player.level, cfg)) {
+      killer.player.xp -= xpForLevelDynamic(killer.player.level, cfg);
       killer.player.level += 1;
-      const newStats = applyEquipBonuses(statsForLevel(killer.player.classId, killer.player.level), killer.player.equipped);
+      killer.player.unspentPoints += cfg.pointsPerLevel;
+      const newStats = deriveStats(
+        killer.player.classId,
+        killer.player.level,
+        killer.player.attrs,
+        killer.player.equipped,
+      );
       killer.player.stats = newStats;
       killer.player.maxHp = newStats.hp;
       killer.player.maxMp = newStats.mp;
@@ -636,6 +706,25 @@ function applyEquipBonuses(base: ReturnType<typeof statsForLevel>, equipped: Equ
     if (item.bonuses.crit) out.crit += item.bonuses.crit;
   }
   return out;
+}
+
+function deriveStats(
+  classId: ClassId,
+  level: number,
+  attrs: Attributes,
+  equipped: EquippedSlots,
+): ReturnType<typeof statsForLevel> {
+  const base = statsForLevel(classId, level);
+  const bonus = bonusFromAttributes(attrs);
+  const summed = {
+    hp: base.hp + bonus.hp,
+    mp: base.mp + bonus.mp,
+    attack: base.attack + bonus.attack,
+    defense: base.defense + bonus.defense,
+    speed: base.speed + bonus.speed,
+    crit: base.crit + bonus.crit,
+  };
+  return applyEquipBonuses(summed, equipped);
 }
 
 function addToInventory(inv: InventorySlot[], itemId: string, qty: number): void {

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 interface Props {
   user: AuthUser;
   onLeave: () => void;
-  onOpenPanel: (panel: "inventory" | "shop" | "agent" | "travel" | "chat") => void;
+  onOpenPanel: (panel: "inventory" | "shop" | "agent" | "travel" | "chat" | "stats") => void;
 }
 
 export function HUD({ user, onLeave, onOpenPanel }: Props) {
@@ -62,6 +62,14 @@ export function HUD({ user, onLeave, onOpenPanel }: Props) {
         <div className="font-display text-sm text-aether-accent">{zoneDef?.name ?? zone}</div>
         <div className="text-[10px] text-stone-400">{zoneDef?.description}</div>
         <div className="flex gap-1 mt-2 flex-wrap justify-end">
+          <button className="btn !py-1 !px-2 !text-xs" onClick={() => onOpenPanel("stats")}>
+            📊 Stats
+            {me.unspentPoints > 0 && (
+              <span className="ml-1 inline-block px-1 rounded bg-aether-accent text-stone-900 text-[10px] font-bold">
+                {me.unspentPoints}
+              </span>
+            )}
+          </button>
           <button className="btn !py-1 !px-2 !text-xs" onClick={() => onOpenPanel("inventory")}>
             🎒 Bag
           </button>
@@ -77,6 +85,17 @@ export function HUD({ user, onLeave, onOpenPanel }: Props) {
           <button className="btn !py-1 !px-2 !text-xs" onClick={() => onOpenPanel("chat")}>
             💬 Chat
           </button>
+          {user.isAdmin && (
+            <a
+              className="btn !py-1 !px-2 !text-xs"
+              href="/admin"
+              target="_blank"
+              rel="noreferrer"
+              title="Open admin in a new tab"
+            >
+              🛠 Admin
+            </a>
+          )}
           <button className="btn-danger !py-1 !px-2 !text-xs" onClick={onLeave}>
             ⎋
           </button>

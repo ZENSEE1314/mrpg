@@ -4,7 +4,7 @@ import { CLASSES, type ClassId } from "@aetheria/shared";
 import { emitItem, emitSkill } from "../socket";
 
 interface Props {
-  onOpenPanel: (panel: "inventory" | "shop" | "agent" | "travel" | "chat") => void;
+  onOpenPanel: (panel: "inventory" | "shop" | "agent" | "travel" | "chat" | "stats") => void;
 }
 
 interface Cooldown {

@@ -1,4 +1,4 @@
-import type { ItemDef } from "@aetheria/shared";
+import type { ItemDef, GameConfig as GameConfigT } from "@aetheria/shared";
 
 const API_BASE = "/api";
 
@@ -6,6 +6,7 @@ export interface AuthUser {
   id: string;
   email: string;
   username: string;
+  isAdmin?: boolean;
 }
 
 export interface CharacterSummary {
@@ -80,6 +81,64 @@ export const api = {
 
   async shop() {
     return jsonFetch<{ items: ItemDef[] }>(`${API_BASE}/shop`);
+  },
+
+  // --- admin ---
+  async adminConfig() {
+    return jsonFetch<{ config: GameConfigT; defaults: GameConfigT }>(`${API_BASE}/admin/config`);
+  },
+  async adminUpdateConfig(patch: Partial<GameConfigT>) {
+    return jsonFetch<{ config: GameConfigT }>(`${API_BASE}/admin/config`, {
+      method: "POST",
+      body: JSON.stringify(patch),
+    });
+  },
+  async adminShop() {
+    return jsonFetch<{
+      items: Array<{
+        id: string;
+        name: string;
+        slot: string;
+        rarity: string;
+        defaultBuyPrice: number;
+        defaultSellPrice: number;
+        buyPrice: number;
+        sellPrice: number;
+      }>;
+    }>(`${API_BASE}/admin/shop`);
+  },
+  async adminUpdateShopItem(id: string, prices: { buyPrice?: number; sellPrice?: number }) {
+    return jsonFetch<{ overrides: Record<string, { buyPrice?: number; sellPrice?: number }> }>(
+      `${API_BASE}/admin/shop`,
+      { method: "POST", body: JSON.stringify({ id, ...prices }) },
+    );
+  },
+  async adminQuests() {
+    return jsonFetch<{
+      quests: Array<{
+        id: string;
+        title: string;
+        description: string;
+        objective: { kind?: string; target?: string; count?: number };
+        reward: { xp?: number; gold?: number; itemId?: string; itemQty?: number };
+        isActive: boolean;
+      }>;
+    }>(`${API_BASE}/admin/quests`);
+  },
+  async adminCreateQuest(payload: {
+    title: string;
+    description: string;
+    objective?: { kind?: string; target?: string; count?: number };
+    reward?: { xp?: number; gold?: number; itemId?: string; itemQty?: number };
+    isActive?: boolean;
+  }) {
+    return jsonFetch<{ id: string }>(`${API_BASE}/admin/quests`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  async adminDeleteQuest(id: string) {
+    return jsonFetch<{ ok: boolean }>(`${API_BASE}/admin/quests/${id}`, { method: "DELETE" });
   },
 
   logout() {

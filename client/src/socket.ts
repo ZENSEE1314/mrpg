@@ -1,6 +1,6 @@
 import { io, type Socket } from "socket.io-client";
 import { useGameStore } from "./store";
-import type { AckResp, ZoneId } from "@aetheria/shared";
+import type { AckResp, AttributeId, ZoneId } from "@aetheria/shared";
 
 let socket: Socket | null = null;
 
@@ -149,6 +149,11 @@ export function emitSell(itemId: string): Promise<AckResp> {
 }
 export function emitChat(text: string): void {
   getSocket().emit("chat", { text });
+}
+export function emitAllocateStat(stat: AttributeId): Promise<AckResp> {
+  return new Promise((resolve) => {
+    getSocket().emit("allocateStat", { stat }, (ack: AckResp) => resolve(ack));
+  });
 }
 export function emitAgent(action: "feed" | "train" | "ask" | "rename", payload?: unknown): Promise<AckResp> {
   return new Promise((resolve) => {

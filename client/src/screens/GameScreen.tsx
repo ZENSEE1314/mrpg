@@ -10,6 +10,7 @@ import { ShopPanel } from "../ui/ShopPanel";
 import { AgentPanel } from "../ui/AgentPanel";
 import { TravelPanel } from "../ui/TravelPanel";
 import { SkillBar } from "../ui/SkillBar";
+import { StatsPanel } from "../ui/StatsPanel";
 
 interface Props {
   user: AuthUser;
@@ -78,6 +79,7 @@ export function GameScreen({ user, character, onLeave }: Props) {
       {activePanel === "agent" && <AgentPanel onClose={() => setActivePanel("none")} />}
       {activePanel === "travel" && <TravelPanel onClose={() => setActivePanel("none")} />}
       {activePanel === "chat" && <ChatPanel onClose={() => setActivePanel("none")} />}
+      {activePanel === "stats" && <StatsPanel onClose={() => setActivePanel("none")} />}
     </div>
   );
 }

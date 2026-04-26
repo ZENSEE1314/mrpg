@@ -7,10 +7,13 @@ import { db, type UserRow, type CharacterRow } from "./db.js";
 import { config } from "./config.js";
 import {
   CLASSES,
+  DEFAULT_GAME_CONFIG,
   type ClassId,
+  type GameConfig,
   STARTER_INVENTORY,
   statsForLevel,
 } from "@aetheria/shared";
+import { getConfig } from "./db.js";
 
 const SALT_ROUNDS = 10;
 const TOKEN_TTL = "7d";
@@ -66,12 +69,15 @@ authRouter.post("/register", async (req, res) => {
   const hash = await bcrypt.hash(password, SALT_ROUNDS);
   const id = nanoid(16);
   const now = Date.now();
+  // First user ever registered becomes admin so the project owner can manage the game.
+  const userCount = db.prepare("SELECT COUNT(*) as c FROM users").get() as { c: number };
+  const isAdmin = userCount.c === 0 ? 1 : 0;
   db.prepare(
-    "INSERT INTO users (id, email, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(id, email.toLowerCase(), username, hash, now);
+    "INSERT INTO users (id, email, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(id, email.toLowerCase(), username, hash, isAdmin, now);
 
   const token = signToken(id);
-  res.json({ token, user: { id, email: email.toLowerCase(), username } });
+  res.json({ token, user: { id, email: email.toLowerCase(), username, isAdmin: isAdmin === 1 } });
 });
 
 authRouter.post("/login", async (req, res) => {
@@ -93,7 +99,10 @@ authRouter.post("/login", async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   }
   const token = signToken(user.id);
-  res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  res.json({
+    token,
+    user: { id: user.id, email: user.email, username: user.username, isAdmin: user.is_admin === 1 },
+  });
 });
 
 authRouter.get("/me", (req, res) => {
@@ -101,11 +110,13 @@ authRouter.get("/me", (req, res) => {
   if (!token) return res.status(401).json({ error: "Missing token" });
   const decoded = verifyToken(token);
   if (!decoded) return res.status(401).json({ error: "Invalid token" });
-  const user = db.prepare("SELECT id, email, username FROM users WHERE id = ?").get(decoded.uid) as
-    | { id: string; email: string; username: string }
+  const user = db.prepare("SELECT id, email, username, is_admin FROM users WHERE id = ?").get(decoded.uid) as
+    | { id: string; email: string; username: string; is_admin: number }
     | undefined;
   if (!user) return res.status(401).json({ error: "User not found" });
-  res.json({ user });
+  res.json({
+    user: { id: user.id, email: user.email, username: user.username, isAdmin: user.is_admin === 1 },
+  });
 });
 
 authRouter.get("/characters", (req, res) => {
@@ -143,10 +154,13 @@ authRouter.post("/characters", (req, res) => {
   const stats = statsForLevel(classId as ClassId, 1);
   const id = nanoid(16);
   const now = Date.now();
+  const cfg = getConfig<GameConfig>("gameConfig", DEFAULT_GAME_CONFIG);
   db.prepare(
     `INSERT INTO characters
-      (id, user_id, name, class_id, level, xp, gold, hp, mp, zone, pos_x, pos_y, inventory_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 1, 0, 80, ?, ?, 'town', 800, 600, ?, ?, ?)`,
+      (id, user_id, name, class_id, level, xp, gold, hp, mp, zone, pos_x, pos_y,
+       attr_str, attr_agi, attr_luck, attr_magic, unspent_points,
+       inventory_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 1, 0, 80, ?, ?, 'town', 800, 600, 1, 1, 1, 1, ?, ?, ?, ?)`,
   ).run(
     id,
     decoded.uid,
@@ -154,6 +168,7 @@ authRouter.post("/characters", (req, res) => {
     classId,
     stats.hp,
     stats.mp,
+    cfg.initialPoints,
     JSON.stringify(STARTER_INVENTORY),
     now,
     now,

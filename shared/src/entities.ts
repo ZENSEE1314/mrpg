@@ -5,6 +5,15 @@ export interface Vec2 {
   y: number;
 }
 
+export interface Attributes {
+  str: number;
+  agi: number;
+  luck: number;
+  magic: number;
+}
+
+export type AttributeId = keyof Attributes;
+
 export interface PlayerState {
   id: string;
   userId: string;
@@ -18,12 +27,60 @@ export interface PlayerState {
   mp: number;
   maxMp: number;
   stats: BaseStats;
+  attrs: Attributes;
+  unspentPoints: number;
   pos: Vec2;
   facing: number;
   zone: ZoneId;
   inventory: InventorySlot[];
   equipped: EquippedSlots;
   agent: AgentState;
+}
+
+// Defaults; admin can override these via game_config in production.
+export interface GameConfig {
+  /** Initial unspent points granted at character creation. */
+  initialPoints: number;
+  /** Unspent points granted on each level up. */
+  pointsPerLevel: number;
+  /** Cost curve bracket: every N points raised increases the unit cost by 1. */
+  statCostBracketSize: number;
+  /** Each bracket adds this much to the upgrade cost (1, 2, 3, ...). */
+  statCostBase: number;
+  /** XP curve: xp needed to reach next level = xpBase * level^xpExp. */
+  xpBase: number;
+  xpExp: number;
+}
+
+export const DEFAULT_GAME_CONFIG: GameConfig = {
+  initialPoints: 25,
+  pointsPerLevel: 5,
+  statCostBracketSize: 5,
+  statCostBase: 1,
+  xpBase: 50,
+  xpExp: 1.6,
+};
+
+export function attributeUpgradeCost(currentValue: number, cfg: GameConfig = DEFAULT_GAME_CONFIG): number {
+  const bracket = Math.floor((currentValue - 1) / Math.max(1, cfg.statCostBracketSize));
+  return Math.max(1, cfg.statCostBase + bracket);
+}
+
+/** Bonus deltas an attribute level applies on top of class base stats. */
+export function bonusFromAttributes(attrs: Attributes): BaseStats {
+  // Anything above the starting 1-in-each gives diminishing returns.
+  const s = Math.max(0, attrs.str - 1);
+  const a = Math.max(0, attrs.agi - 1);
+  const l = Math.max(0, attrs.luck - 1);
+  const m = Math.max(0, attrs.magic - 1);
+  return {
+    hp: s * 5,
+    mp: m * 4,
+    attack: s * 2,
+    defense: Math.floor(s * 0.5) + Math.floor(a * 0.25),
+    speed: a * 2,
+    crit: Math.floor(a * 0.4) + Math.floor(l * 0.6),
+  };
 }
 
 export interface AgentState {

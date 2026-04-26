@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import { config } from "./config.js";
 import { authRouter, verifyToken } from "./auth.js";
+import { adminRouter } from "./admin.js";
 import { db } from "./db.js";
 import { World } from "./game/world.js";
 import { AgentService } from "./game/agent.js";
@@ -20,6 +21,7 @@ app.use(cors({ origin: config.corsOrigin === "*" ? true : config.corsOrigin }));
 app.use(express.json({ limit: "32kb" }));
 
 app.use("/api/auth", authRouter);
+app.use("/api/admin", adminRouter);
 
 app.get("/api/shop", (_req, res) => {
   res.json({
@@ -75,6 +77,7 @@ const agentSchema = z.object({
   action: z.enum(["feed", "train", "ask", "rename"]),
   payload: z.unknown().optional(),
 });
+const allocateStatSchema = z.object({ stat: z.enum(["str", "agi", "luck", "magic"]) });
 
 io.on("connection", (socket) => {
   let authedCharId: string | null = null;
@@ -162,6 +165,14 @@ io.on("connection", (socket) => {
     const parsed = itemSchema.safeParse(raw);
     if (!parsed.success) return ack?.({ ok: false, error: "Bad item" });
     const result = world.sellToShop(socket.id, parsed.data.itemId);
+    ack?.(result.ok ? { ok: true } : { ok: false, error: result.error ?? "fail" });
+  });
+
+  socket.on("allocateStat", (raw, ack) => {
+    if (!authedCharId) return ack?.({ ok: false, error: "Not authed" });
+    const parsed = allocateStatSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ ok: false, error: "Bad stat" });
+    const result = world.allocateStat(socket.id, parsed.data.stat);
     ack?.(result.ok ? { ok: true } : { ok: false, error: result.error ?? "fail" });
   });
 
