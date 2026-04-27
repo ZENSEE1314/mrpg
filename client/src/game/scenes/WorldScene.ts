@@ -292,13 +292,13 @@ export class WorldScene extends Phaser.Scene {
         label: "Enter Shop",
       });
 
-      // Bank — opens inventory panel for now (vault later).
+      // Bank — bag ↔ vault transfers.
       this.addHouse(1160, 720, "🏛 Bank", { wall: 0xc9d4e2, roof: 0x4a4f8a, door: 0x2a2440, sign: "🏛" });
       this.enterables.push({
         x: 1160,
         y: 800,
         radius: 50,
-        target: { kind: "panel", panel: "inventory" },
+        target: { kind: "panel", panel: "bank" },
         label: "Open Vault",
       });
 

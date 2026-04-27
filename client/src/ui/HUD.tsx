@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 interface Props {
   user: AuthUser;
   onLeave: () => void;
-  onOpenPanel: (panel: "inventory" | "shop" | "agent" | "travel" | "chat" | "stats") => void;
+  onOpenPanel: (panel: "inventory" | "shop" | "agent" | "travel" | "chat" | "stats" | "bank") => void;
 }
 
 export function HUD({ user, onLeave, onOpenPanel }: Props) {

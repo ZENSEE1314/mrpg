@@ -18,7 +18,7 @@ export interface FloatingNumber {
   ts: number;
 }
 
-export type PanelId = "none" | "inventory" | "shop" | "agent" | "travel" | "chat" | "stats";
+export type PanelId = "none" | "inventory" | "shop" | "agent" | "travel" | "chat" | "stats" | "bank";
 
 interface GameStore {
   connected: boolean;

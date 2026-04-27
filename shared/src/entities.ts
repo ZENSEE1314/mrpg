@@ -40,6 +40,8 @@ export interface PlayerState {
   garden?: GardenState;
   /** Active forge job — optional until forge/garden ship. */
   forge?: ForgeState;
+  /** Bank stash — separate 6x6 grid stored at the bank in town. */
+  bank: InventoryItem[];
 }
 
 // Defaults; admin can override these via game_config in production.

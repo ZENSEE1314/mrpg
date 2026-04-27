@@ -140,6 +140,11 @@ export function emitUnequip(slot: EquipSlot): Promise<AckResp> {
     getSocket().emit("unequip", { slot }, (ack: AckResp) => resolve(ack));
   });
 }
+export function emitBankTransfer(uid: string, direction: "toBank" | "toBag"): Promise<AckResp> {
+  return new Promise((resolve) => {
+    getSocket().emit("bankTransfer", { uid, direction }, (ack: AckResp) => resolve(ack));
+  });
+}
 export function emitTravel(zone: ZoneId): Promise<AckResp> {
   return new Promise((resolve) => {
     getSocket().emit("travel", { zone }, (ack: AckResp) => resolve(ack));

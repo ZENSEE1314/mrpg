@@ -138,6 +138,7 @@ export class World {
     const classId = row.class_id as ClassId;
     const equipped = migrateEquipped(JSON.parse(row.equipped_json));
     const inventory = migrateInventory(JSON.parse(row.inventory_json));
+    const bank = migrateInventory(JSON.parse(row.bank_json ?? "[]"));
     const agent: AgentState = JSON.parse(row.agent_json);
     const attrs: Attributes = {
       str: row.attr_str,
@@ -168,6 +169,7 @@ export class World {
       inventory,
       equipped,
       agent,
+      bank,
     };
 
     return {
@@ -185,7 +187,7 @@ export class World {
       `UPDATE characters SET
         level = ?, xp = ?, gold = ?, hp = ?, mp = ?, zone = ?, pos_x = ?, pos_y = ?,
         attr_str = ?, attr_agi = ?, attr_luck = ?, attr_magic = ?, unspent_points = ?,
-        inventory_json = ?, equipped_json = ?, agent_json = ?, updated_at = ?
+        inventory_json = ?, equipped_json = ?, agent_json = ?, bank_json = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       p.level,
@@ -204,6 +206,7 @@ export class World {
       JSON.stringify(p.inventory),
       JSON.stringify(p.equipped),
       JSON.stringify(p.agent),
+      JSON.stringify(p.bank ?? []),
       Date.now(),
       p.id,
     );
@@ -441,6 +444,58 @@ export class World {
     }
     this.equipUid(conn, uid, target);
     this.direct(socketId, "playerStats", { player: conn.player });
+  }
+
+  bankTransfer(
+    socketId: string,
+    uid: string,
+    direction: "toBank" | "toBag",
+  ): { ok: boolean; error?: string } {
+    const conn = this.playerBySocket.get(socketId);
+    if (!conn) return { ok: false, error: "Not connected" };
+    if (conn.player.zone !== "town") return { ok: false, error: "Visit the bank in town" };
+
+    if (direction === "toBank") {
+      // Move from bag → bank.
+      const idx = conn.player.inventory.findIndex((it) => it.uid === uid);
+      if (idx < 0) return { ok: false, error: "Item not in bag" };
+      const inst = conn.player.inventory[idx]!;
+      // Refuse to bank an equipped item.
+      for (const k of Object.keys(conn.player.equipped) as Array<keyof EquippedSlots>) {
+        if (conn.player.equipped[k] === uid) return { ok: false, error: "Unequip first" };
+      }
+      const def = ITEMS[inst.itemId];
+      if (!def) return { ok: false, error: "Unknown item" };
+      const sh = itemShape(def);
+      const placed = addToInventory(
+        conn.player.bank,
+        inst.itemId,
+        inst.qty,
+        inst.affixes,
+        inst.sockets,
+      );
+      if (!placed) return { ok: false, error: "Bank is full" };
+      void sh;
+      conn.player.inventory.splice(idx, 1);
+    } else {
+      // Move from bank → bag.
+      const idx = conn.player.bank.findIndex((it) => it.uid === uid);
+      if (idx < 0) return { ok: false, error: "Item not in bank" };
+      const inst = conn.player.bank[idx]!;
+      const placed = addToInventory(
+        conn.player.inventory,
+        inst.itemId,
+        inst.qty,
+        inst.affixes,
+        inst.sockets,
+      );
+      if (!placed) return { ok: false, error: "Bag is full" };
+      conn.player.bank.splice(idx, 1);
+    }
+
+    this.direct(socketId, "playerStats", { player: conn.player });
+    this.persist(conn);
+    return { ok: true };
   }
 
   unequipSlot(socketId: string, slot: EquipSlot): { ok: boolean; error?: string } {

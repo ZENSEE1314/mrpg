@@ -11,6 +11,7 @@ import { AgentPanel } from "../ui/AgentPanel";
 import { TravelPanel } from "../ui/TravelPanel";
 import { SkillBar } from "../ui/SkillBar";
 import { StatsPanel } from "../ui/StatsPanel";
+import { BankPanel } from "../ui/BankPanel";
 
 interface Props {
   user: AuthUser;
@@ -80,6 +81,7 @@ export function GameScreen({ user, character, onLeave }: Props) {
       {activePanel === "travel" && <TravelPanel onClose={() => setActivePanel("none")} />}
       {activePanel === "chat" && <ChatPanel onClose={() => setActivePanel("none")} />}
       {activePanel === "stats" && <StatsPanel onClose={() => setActivePanel("none")} />}
+      {activePanel === "bank" && <BankPanel onClose={() => setActivePanel("none")} />}
     </div>
   );
 }

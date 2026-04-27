@@ -75,6 +75,10 @@ const useItemSchema = z.object({ uid: z.string() });
 const unequipSchema = z.object({
   slot: z.enum(["head", "chest", "legs", "gloves", "mainHand", "offHand", "amulet", "belt", "ring1", "ring2"]),
 });
+const bankTransferSchema = z.object({
+  uid: z.string(),
+  direction: z.enum(["toBank", "toBag"]),
+});
 const travelSchema = z.object({ zone: z.enum(["town", "meadow", "forest", "crypt", "house"]) });
 const chatSchema = z.object({ text: z.string().min(1).max(200) });
 const agentSchema = z.object({
@@ -144,6 +148,14 @@ io.on("connection", (socket) => {
     const parsed = unequipSchema.safeParse(raw);
     if (!parsed.success) return ack?.({ ok: false, error: "Bad slot" });
     const result = world.unequipSlot(socket.id, parsed.data.slot);
+    ack?.(result.ok ? { ok: true } : { ok: false, error: result.error ?? "fail" });
+  });
+
+  socket.on("bankTransfer", (raw, ack) => {
+    if (!authedCharId) return ack?.({ ok: false, error: "Not authed" });
+    const parsed = bankTransferSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ ok: false, error: "Bad payload" });
+    const result = world.bankTransfer(socket.id, parsed.data.uid, parsed.data.direction);
     ack?.(result.ok ? { ok: true } : { ok: false, error: result.error ?? "fail" });
   });
 
